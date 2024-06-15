@@ -17,10 +17,15 @@ import P_loader
 
 
 class Autoencoder(nn.Module):
-    def __init__(self, dim_z=100, dim_c=3, dim_f=16):
+    def __init__(self, latent_dim=100, dim_color=3, dim_f=16):
+        r"""
+        :param latent_dim: 
+        :param dim_color: epresent the number of color channels (e.g., RGB images where dim_c=3).
+        :param dim_f: represent the number of feature maps or filters typically used in convolutional layers.
+        """
         super(Autoencoder, self).__init__()
-        self.dim_c = dim_c
-        self.dim_z = dim_z
+        self.dim_c = dim_color
+        self.dim_z = latent_dim
 
         self.block1 = nn.Sequential(
             # [-1, 3, 32, 32] -> [-1, 128, 16, 16]
@@ -50,10 +55,10 @@ class Autoencoder(nn.Module):
 
         self.block5 = nn.Sequential(
             # [-1, 1 + cc_dim + dc_dim, 1, 1]
-            nn.Conv2d(dim_f * 8, dim_z, 4, 1, 0)
+            nn.Conv2d(dim_f * 8, latent_dim, 4, 1, 0)
         )
 
-        self.block6 = nn.ConvTranspose2d(dim_z, dim_f * 8, 4, 1, 0)
+        self.block6 = nn.ConvTranspose2d(latent_dim, dim_f * 8, 4, 1, 0)
 
         self.block7 = nn.Sequential(
             nn.ConvTranspose2d(dim_f * 8, dim_f * 4, 4, 2, 1),
@@ -260,28 +265,39 @@ def train(model: Autoencoder, dataset: P_loader, testset: P_loader, model_path: 
                                                                                                         loss_test)))
 
 
-def extract_features(model: Autoencoder, dataset: P_loader, latent_dim: int, feature_save_path: str, batch_size: int=512):
+def extract_features(model: Autoencoder, dataset: P_loader, feature_save_path: str, batch_size: int=512):
+    # Create a DataLoader to iterate over the dataset with specified parameters
     dataloader_stable = DataLoader(dataset, batch_size=batch_size, shuffle=False, drop_last=True, num_workers=4)
-    features = torch.empty([len(dataset), latent_dim], dtype=torch.float, requires_grad=False, device='cpu')
+    # Pre-allocate a tensor to store features for the entire dataset
+    # The shape is [number of samples in the dataset, dimension of the encoded features]
+    features = torch.empty([len(dataset), model.dim_z], dtype=torch.float, requires_grad=False, device='cpu')
+    # Initialize a counter to keep track of the processed samples
     i = 0
+    # Loop over batches of data in the DataLoader
     for data in dataloader_stable:
+        # Unpack the data, since only the images (first item) are needed
         img, _, _ = data
+        # Move the images to the GPU
         img = img.cuda()
+        # Disable gradient computation for these images to save memory and computations
         img.requires_grad = False
-        # ===================forward=====================
+        # detach() will not track gradients
+        # Pass the images through the encoder of the model to obtain the encoded features
         z = model.encoder(img.detach())
+        # Store the encoded features in the pre-allocated tensor, converting them to CPU
         features[i:i + img.shape[0], :] = z.squeeze().detach().cpu()
+        # Update the counter
         i += img.shape[0]
-        print('Extracted {}/{} features...'.format(i, len(dataset)))
-
+        # Print the progress of the feature extraction
+        print('Extracted {}/ features...'.format(i, len(dataset)))
+    # Truncate the features tensor to the actual number of processed samples
     features = features[:i]
+    # Save the extracted features to the specified path
     torch.save(features, feature_save_path)
 
 
 def decode_features(model: Autoencoder, gen_im_path: str, model_path: str, gen_feature_path: str, gen_im_pair_path: str, batch_size: int=512):
-    for file in os.listdir(model_path):
-        if fnmatch.fnmatch(file, 'Epoch_*_sim_refine_autoencoder*.pth'):
-            model.load_state_dict(torch.load(os.path.join(model_path, file)))
+
     feature_dict = sio.loadmat(gen_feature_path)
     features = feature_dict['features']
     ids = feature_dict['ids']
