@@ -10,7 +10,7 @@ import sys
 def has_file_allowed_extension(filename, extensions):
     """Checks if a file is an allowed extension.
     Args:
-        filename (string): path to a file
+        filename (string): path_type to a file
         extensions (iterable of strings): extensions to consider (lowercase)
     Returns:
         bool: True if the filename ends with one of given extensions
@@ -22,7 +22,7 @@ def has_file_allowed_extension(filename, extensions):
 def is_image_file(filename):
     """Checks if a file is an allowed image extension.
     Args:
-        filename (string): path to a file
+        filename (string): path_type to a file
     Returns:
         bool: True if the filename ends with a known image extension
     """
@@ -56,8 +56,8 @@ class DatasetFolder(data.Dataset):
         root/class_y/nsdf3.ext
         root/class_y/asd932_.ext
     Args:
-        root (string): Root directory path.
-        loader (callable): A function to load a sample given its path.
+        root (string): Root directory path_type.
+        loader (callable): A function to load a sample given its path_type.
         extensions (list[string]): A list of allowed extensions.
         transform (callable, optional): A function/transform that takes in
             a sample and returns a transformed version.
@@ -67,7 +67,7 @@ class DatasetFolder(data.Dataset):
      Attributes:
         classes (list): List of the class names.
         class_to_idx (dict): Dict with items (class_name, class_index).
-        samples (list): List of (sample path, class_index) tuples
+        samples (list): List of (sample path_type, class_index) tuples
         targets (list): The class_index value for each image in the dataset
     """
 
@@ -94,7 +94,7 @@ class DatasetFolder(data.Dataset):
         """
         Finds the class folders in a dataset.
         Args:
-            dir (string): Root directory path.
+            dir (string): Root directory path_type.
         Returns:
             tuple: (classes, class_to_idx) where classes are relative to (dir), and class_to_idx is a dictionary.
         Ensures:
@@ -143,7 +143,7 @@ IMG_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.ppm', '.bmp', '.pgm', '.tif', '.tif
 
 
 def pil_loader(path):
-    # open path as file to avoid ResourceWarning (https://github.com/python-pillow/Pillow/issues/835)
+    # open path_type as file to avoid ResourceWarning (https://github.com/python-pillow/Pillow/issues/835)
     with open(path, 'rb') as f:
         img = Image.open(f)
         return img.convert('RGB')
@@ -175,16 +175,16 @@ class P_loader(DatasetFolder):
         root/cat/nsdf3.png
         root/cat/asd932_.png
     Args:
-        root (string): Root directory path.
+        root (string): Root directory path_type.
         transform (callable, optional): A function/transform that  takes in an PIL image
             and returns a transformed version. E.g, ``transforms.RandomCrop``
         target_transform (callable, optional): A function/transform that takes in the
             target and transforms it.
-        loader (callable, optional): A function to load an image given its path.
+        loader (callable, optional): A function to load an image given its path_type.
      Attributes:
         classes (list): List of the class names.
         class_to_idx (dict): Dict with items (class_name, class_index).
-        imgs (list): List of (image path, class_index) tuples
+        imgs (list): List of (image path_type, class_index) tuples
     """
     def __init__(self, root, transform=None, target_transform=None,
                  loader=default_loader):

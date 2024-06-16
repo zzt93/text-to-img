@@ -1,6 +1,9 @@
 #
 # This is a sample Notebook to demonstrate how to read "MNIST Dataset"
 #
+import argparse
+import os
+
 import numpy as np  # linear algebra
 import struct
 from array import array
@@ -18,7 +21,8 @@ class MnistDataloader(object):
         self.test_images_filepath = test_images_filepath
         self.test_labels_filepath = test_labels_filepath
 
-    def read_images_labels(self, images_filepath, labels_filepath):
+    @staticmethod
+    def read_images_labels(images_filepath, labels_filepath):
         labels = []
         with open(labels_filepath, 'rb') as file:
             magic, size = struct.unpack(">II", file.read(8))
@@ -57,11 +61,11 @@ if __name__ == '__main__':
     #
     # Set file paths based on added MNIST Datasets
     #
-    input_path = '../input'
-    training_images_filepath = join(input_path, 'train-images-idx3-ubyte/train-images-idx3-ubyte')
-    training_labels_filepath = join(input_path, 'train-labels-idx1-ubyte/train-labels-idx1-ubyte')
-    test_images_filepath = join(input_path, 't10k-images-idx3-ubyte/t10k-images-idx3-ubyte')
-    test_labels_filepath = join(input_path, 't10k-labels-idx1-ubyte/t10k-labels-idx1-ubyte')
+    input_path = './mnist'
+    training_images_filepath = join(input_path, 'train-images.idx3-ubyte')
+    training_labels_filepath = join(input_path, 'train-labels.idx1-ubyte')
+    test_images_filepath = join(input_path, 't10k-images.idx3-ubyte')
+    test_labels_filepath = join(input_path, 't10k-labels.idx1-ubyte')
 
 
     #
@@ -77,8 +81,8 @@ if __name__ == '__main__':
             title_text = x[1]
             plt.subplot(rows, cols, index)
             plt.imshow(image, cmap=plt.cm.gray)
-            if (title_text != ''):
-                plt.title(title_text, fontsize=15);
+            if title_text != '':
+                plt.title(title_text, fontsize=15)
             index += 1
 
 
@@ -92,16 +96,39 @@ if __name__ == '__main__':
     #
     # Show some random training and test images
     #
-    images_2_show = []
-    titles_2_show = []
-    for i in range(0, 10):
-        r = random.randint(1, 60000)
-        images_2_show.append(x_train[r])
-        titles_2_show.append('training image [' + str(r) + '] = ' + str(y_train[r]))
+    # images_2_show = []
+    # titles_2_show = []
+    # for i in range(0, 10):
+    #     r = random.randint(1, 60000)
+    #     images_2_show.append(x_train[r])
+    #     titles_2_show.append('training image [' + str(r) + '] = ' + str(y_train[r]))
+    #
+    # for i in range(0, 5):
+    #     r = random.randint(1, 10000)
+    #     images_2_show.append(x_test[r])
+    #     titles_2_show.append('test image [' + str(r) + '] = ' + str(y_test[r]))
+    #
+    # show_images(images_2_show, titles_2_show)
 
-    for i in range(0, 5):
-        r = random.randint(1, 10000)
-        images_2_show.append(x_test[r])
-        titles_2_show.append('test image [' + str(r) + '] = ' + str(y_test[r]))
+    def save_images(dir: str, images: [], labels: []):
+        count = {}
+        for x in zip(images, labels):
+            image = x[0]
+            class_label = x[1]
+            path = join(dir, str(class_label), str(count.get(class_label, 0)) + ".png")
+            count[class_label] = count.get(class_label, 0) + 1
+            dir_name = os.path.dirname(path)
+            if not os.path.exists(dir_name):
+                os.makedirs(dir_name)
+            plt.imsave(path, image)
 
-    show_images(images_2_show, titles_2_show)
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--train-dir", help='path_type to train root dir', type=str, metavar="", dest="train_dir", default="./train")
+    parser.add_argument("--test-dir", help='path_type to test root dir', type=str, metavar="", dest="test_dir", default="./test")
+    args = parser.parse_args()
+
+    save_images(args.train_dir, x_train, y_train)
+    print('generate train data done')
+    save_images(args.test_dir, x_test, y_test)
+    print('generate test data done')

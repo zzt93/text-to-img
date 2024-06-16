@@ -55,6 +55,7 @@ class Autoencoder(nn.Module):
 
         self.block5 = nn.Sequential(
             # [-1, 1 + cc_dim + dc_dim, 1, 1]
+            # 2维卷积层，其中输入通道数为dim_f * 8，输出通道数为latent_dim，卷积核大小为4，步长为1，填充为0
             nn.Conv2d(dim_f * 8, latent_dim, 4, 1, 0)
         )
 
@@ -151,7 +152,7 @@ def refine(model: Autoencoder, dataset: P_loader, model_path: str, batch_size: i
         model.parameters(), lr=learning_rate)
 
     # save input test image
-    # save_image(test_img[:64], os.path.join(img_save_path, 'test_image_input.png'))
+    # save_image(test_img[:64], os.path_type.join(img_save_path, 'test_image_input.png'))
 
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4)
     for epoch in range(num_epochs):
@@ -180,7 +181,7 @@ def refine(model: Autoencoder, dataset: P_loader, model_path: str, batch_size: i
         loss_test = 0
         # out, _ = model(test_img.cuda())
         # pic = out.data.cpu()
-        # save_image(pic[:64], os.path.join(img_save_path,
+        # save_image(pic[:64], os.path_type.join(img_save_path,
         #                                   'Epoch_{}_test_image_{:04f}_{:04f}.png'.format(epoch, loss_train,
         #                                                                                  loss_test)))
 
@@ -255,7 +256,7 @@ def train(model: Autoencoder, dataset: P_loader, testset: P_loader, model_path: 
 
         # out, _ = model(test_img.cuda())
         # pic = out.data.cpu()
-        # save_image(pic[:64], os.path.join(img_save_path,
+        # save_image(pic[:64], os.path_type.join(img_save_path,
         #                                   'Epoch_{}_test_image_{:04f}_{:04f}.png'.format(epoch, loss_train,
         #                                                                                  loss_test)))
 
@@ -292,7 +293,7 @@ def extract_features(model: Autoencoder, dataset: P_loader, feature_save_path: s
         print('Extracted {}/ features...'.format(i, len(dataset)))
     # Truncate the features tensor to the actual number of processed samples
     features = features[:i]
-    # Save the extracted features to the specified path
+    # Save the extracted features to the specified path_type
     torch.save(features, feature_save_path)
 
 
@@ -312,9 +313,9 @@ def decode_features(model: Autoencoder, gen_im_path: str, model_path: str, gen_f
     # =====================generate reconstructed-generated image pairs===========
     for i in range(num_ids):
         # pic_ori = dataset[ids[0, i]][0]
-        # save_image(pic_ori, os.path.join(gen_im_pair_path, 'img_{0:03d}_ori.png'.format(i)))
+        # save_image(pic_ori, os.path_type.join(gen_im_pair_path, 'img_{0:03d}_ori.png'.format(i)))
         # y_rec = y[i + num_ids,:,:,:]
-        # save_image(y_rec.cpu(), os.path.join(gen_im_pair_path, 'img_{0:03d}_rec.png'.format(i)))
+        # save_image(y_rec.cpu(), os.path_type.join(gen_im_pair_path, 'img_{0:03d}_rec.png'.format(i)))
         y_gen = y[i, :, :, :]
         save_image(y_gen.cpu(), os.path.join(gen_im_pair_path, 'img_{0:03d}_gen.png'.format(i)))
 

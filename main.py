@@ -20,15 +20,24 @@ class PathType(IntEnum):
     feature = 3
 
 
-def path(path: PathType, root_dir: str) -> str:
-    if path == PathType.train:
-        return os.path.join(root_dir, "train")
-    elif path == PathType.test:
-        return os.path.join(root_dir, "test")
-    elif path == PathType.model:
-        return os.path.join(root_dir, "model")
-    elif path == PathType.feature:
-        return os.path.join(root_dir, "feature")
+def path(path_type: PathType, root_dir: str) -> str:
+    if path_type == PathType.train:
+        dir = os.path.join(root_dir, "train")
+        if not os.path.exists(dir):
+            raise Exception("no train data dir")
+        return dir
+    elif path_type == PathType.test:
+        dir = os.path.join(root_dir, "test")
+        if not os.path.exists(dir):
+            raise Exception("no test data dir")
+        return dir
+    elif path_type == PathType.model:
+        dir = os.path.join(root_dir, "model")
+        if not os.path.exists(dir):
+            os.makedirs(dir)
+        return dir
+    elif path_type == PathType.feature:
+        return os.path.join(root_dir, "feature", "feature.pt")
 
 
 def train_coder(dim: int, coder_dir: str) -> coder.Autoencoder:
@@ -37,9 +46,9 @@ def train_coder(dim: int, coder_dir: str) -> coder.Autoencoder:
     model_path = path(PathType.model, coder_dir)
     feature_path = path(PathType.feature, coder_dir)
 
-    encoder = coder.Autoencoder(latent_dim=dim)
+    encoder = coder.Autoencoder(latent_dim=dim).cuda()
 
-    img_transform = transforms.Compose([transforms.ToTensor(),])
+    img_transform = transforms.Compose([transforms.ToTensor()])
     dataset = P_loader.P_loader(root=data_path, transform=img_transform)
     testset = P_loader.P_loader(root=test_path, transform=img_transform)
     coder.train(encoder, dataset, testset, model_path)
@@ -93,7 +102,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--train", help="whether to train", dest='train', type=bool, default=True)
     parser.add_argument("--predict", help="whether to predict", dest='predict', type=bool, default=True)
-    parser.add_argument("--coder-dir", help='path to coder root dir', type=str, metavar="", dest="coder_dir")
+    parser.add_argument("--coder-dir", help='path_type to coder root dir', type=str, metavar="", dest="coder_dir", default="./coder")
+    parser.add_argument("--ot-dir", help='path_type to OT root dir', type=str, metavar="", dest="ot_dir", default="./ot")
     parser.add_argument("--latent-dim", help='', type=int, metavar="", dest="latent_dim", default=2)
     args = parser.parse_args()
 
