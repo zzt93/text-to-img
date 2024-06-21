@@ -7,7 +7,10 @@ import pdb
 
 
 class OMTRaw():
-    """This class is designed to compute the semi-discrete Optimal Transport (OT) problem.
+    """
+    calculate mapping: x --> y
+
+    This class is designed to compute the semi-discrete Optimal Transport (OT) problem.
     Specifically, within the unit cube [0,1]^n of the n-dim Euclidean space,
     given a source continuous distribution mu, and a discrete target distribution nu = \sum nu_i * \delta(P_i),
     where \delta(x) is the Dirac function at x \in [0,1]^n, compute the Optimal Transport map pushing forward mu to nu.
@@ -19,122 +22,137 @@ class OMTRaw():
     Adam gradient descent method is used here to perform the optimization, and Monte-Carlo integration method is used to calculate the energy.
     """
 
-    def __init__ (self, h_P, num_P, dim, max_iter, lr, bat_size_P, bat_size_n):
+    def __init__(self, y_features_cpu, y_nums, dim, max_iter, lr, bat_size_y, bat_size_x):
         """Parameters to compute semi-discrete Optimal Transport (OT)
         Args:
-            h_P: Host vector (i.e. CPU vector) storing locations of target points with float type and of shape (num_P, dim).
-            num_P: A positive integer indicating the number of target points (i.e. points the target discrete measure concentrates on).
+            y_features_cpu: vector (CPU vector) storing locations of target points with float type and of shape (num_points, dim).
+            y_nums: A positive integer indicating the number of target points (i.e. points the target discrete measure concentrates on).
             dim: A positive integer indicating the ambient dimension of OT problem.
             max_iter: A positive integer indicating the maximum steps the gradient descent would iterate.
             lr: A positive float number indicating the step length (i.e. learning rate) of the gradient descent algorithm.
-            bat_size_P: Size of mini-batch of h_P that feeds to device (i.e. GPU). Positive integer.
-            bat_size_n: Size of mini-batch of Monte-Carlo samples on device. The total number of MC samples used in each iteration is batch_size_n * num_bat.
+            bat_size_y: Size of mini-batch of cpu_features that feeds to device (i.e. GPU). Positive integer.
+            bat_size_x: Size of mini-batch of Monte-Carlo samples on device. The total number of MC samples used in each iteration is batch_size_x * num_bat.
         """
-        self.h_P = h_P
-        self.num_P = num_P
+        self.y_features_cpu = y_features_cpu
+        self.y_nums = y_nums
         self.dim = dim
         self.max_iter = max_iter
         self.lr = lr
-        self.bat_size_P = bat_size_P
-        self.bat_size_n = bat_size_n
+        self.bat_size_y = bat_size_y
+        self.bat_size_x = bat_size_x
 
-        if num_P % bat_size_P != 0:
-        	sys.exit('Error: (num_P) is not a multiple of (bat_size_P)')
+        if y_nums % bat_size_y != 0:
+            sys.exit('Error: (num_P) is not a multiple of (bat_size_P)')
 
-        self.num_bat_P = num_P // bat_size_P
-        #!internal variables
-        self.d_G_z = torch.empty(self.bat_size_n*self.dim, dtype=torch.float, device=torch.device('cuda'))
-        self.d_volP = torch.empty((self.bat_size_n, self.dim), dtype=torch.float, device=torch.device('cuda'))
-        self.d_h = torch.zeros(self.num_P, dtype=torch.float, device=torch.device('cuda'))
-        self.d_delta_h = torch.zeros(self.num_P, dtype=torch.float, device=torch.device('cuda'))
-        self.d_ind = torch.empty(self.bat_size_n, dtype=torch.long, device=torch.device('cuda'))
-        self.d_ind_val = torch.empty(self.bat_size_n, dtype=torch.float, device=torch.device('cuda'))
-        
-        self.d_ind_val_argmax = torch.empty(self.bat_size_n, dtype=torch.long, device=torch.device('cuda'))
-        self.d_tot_ind = torch.empty(self.bat_size_n, dtype=torch.long, device=torch.device('cuda'))
-        self.d_tot_ind_val = torch.empty(self.bat_size_n, dtype=torch.float, device=torch.device('cuda'))
-        self.d_g = torch.zeros(self.num_P, dtype=torch.float, device=torch.device('cuda'))
-        self.d_g_sum = torch.zeros(self.num_P, dtype=torch.float, device=torch.device('cuda'))
-        self.d_adam_m = torch.zeros(self.num_P, dtype=torch.float, device=torch.device('cuda'))
-        self.d_adam_v = torch.zeros(self.num_P, dtype=torch.float, device=torch.device('cuda'))
+        self.num_bat_y = y_nums // bat_size_y
+        # !internal variables
+        self.d_G_z = torch.empty(self.bat_size_x * self.dim, dtype=torch.float, device=torch.device('cuda'))
+        self.d_sampled_x = torch.empty((self.bat_size_x, self.dim), dtype=torch.float, device=torch.device('cuda'))
+        # self.d_h: Optimal value of h (the variable to be optimized of the variational Energy).
+        self.d_h = torch.zeros(self.y_nums, dtype=torch.float, device=torch.device('cuda'))
+        self.d_delta_h = torch.zeros(self.y_nums, dtype=torch.float, device=torch.device('cuda'))
+        self.d_batch_index = torch.empty(self.bat_size_x, dtype=torch.long, device=torch.device('cuda'))
+        self.d_batch_max = torch.empty(self.bat_size_x, dtype=torch.float, device=torch.device('cuda'))
 
-        #!temp variables
-        self.d_U = torch.empty((self.bat_size_P, self.bat_size_n), dtype=torch.float, device=torch.device('cuda'))
-        self.d_temp_h = torch.empty(self.bat_size_P, dtype=torch.float, device=torch.device('cuda'))
-        self.d_temp_P = torch.empty((self.bat_size_P, self.dim), dtype=torch.float, device=torch.device('cuda'))
+        self.d_max_in_0_or_1 = torch.empty(self.bat_size_x, dtype=torch.long, device=torch.device('cuda'))
+        self.d_total_ind = torch.empty(self.bat_size_x, dtype=torch.long, device=torch.device('cuda'))
+        self.d_total_max = torch.empty(self.bat_size_x, dtype=torch.float, device=torch.device('cuda'))
+        self.d_wi = torch.zeros(self.y_nums, dtype=torch.float, device=torch.device('cuda'))
+        self.d_wi_sum = torch.zeros(self.y_nums, dtype=torch.float, device=torch.device('cuda'))
+        self.d_adam_m = torch.zeros(self.y_nums, dtype=torch.float, device=torch.device('cuda'))
+        self.d_adam_v = torch.zeros(self.y_nums, dtype=torch.float, device=torch.device('cuda'))
 
-        #!random number generator
+        # !temp variables
+        self.d_U = torch.empty((self.bat_size_y, self.bat_size_x), dtype=torch.float, device=torch.device('cuda'))
+        self.d_temp_h = torch.empty(self.bat_size_y, dtype=torch.float, device=torch.device('cuda'))
+        self.d_temp_targets = torch.empty((self.bat_size_y, self.dim), dtype=torch.float, device=torch.device('cuda'))
+
+        # !random number generator
         self.qrng = torch.quasirandom.SobolEngine(dimension=self.dim)
 
-        print('Allocated GPU memory: {}MB'.format(torch.cuda.memory_allocated()/1e6))
-        print('Cached memory: {}MB'.format(torch.cuda.memory_cached()/1e6))
+        print('Allocated GPU memory: {}MB'.format(torch.cuda.memory_allocated() / 1e6))
+        print('Cached memory: {}MB'.format(torch.cuda.memory_cached() / 1e6))
 
-
-    def pre_cal(self,count):
-        '''Monte-Carlo sample generator.
-        Args: 
+    def generate_samples(self, count):
+        """Monte-Carlo sample generator.
+        Args:
             count: Index of MC mini-batch to generate in the current iteration step. Used to set the state of random number generator.
         Returns:
             self.d_volP: Generated mini-batch of MC samples on device (i.e. GPU) of shape (self.bat_size_n, dim).
-        '''
-        self.qrng.draw(self.bat_size_n,out=self.d_volP)
-        self.d_volP.add_(-0.5)
+        """
+        self.qrng.draw(self.bat_size_x, out=self.d_sampled_x)
+        self.d_sampled_x.add_(-0.5)
 
-    def cal_measure(self):
-        '''Calculate the pushed-forward measure of current step. 
-        '''
-        self.d_tot_ind_val.fill_(-1e30)
-        self.d_tot_ind.fill_(-1)
-        i = 0     
-        while i < self.num_P // self.bat_size_P:
-            temp_P = self.h_P[i*self.bat_size_P:(i+1)*self.bat_size_P]
-            temp_P = temp_P.view(temp_P.shape[0], -1)	
-                
-            '''U=PX+H'''
-            self.d_temp_h = self.d_h[i*self.bat_size_P:(i+1)*self.bat_size_P]
-            self.d_temp_P.copy_(temp_P)
-            torch.mm(self.d_temp_P, self.d_volP.t(),out=self.d_U)
-            torch.add(self.d_U, self.d_temp_h.expand([self.bat_size_n, -1]).t(), out=self.d_U)
-            '''compute max'''
-            torch.max(self.d_U, 0, out=(self.d_ind_val, self.d_ind))
-            '''add P id offset'''
-            self.d_ind.add_(i*self.bat_size_P)
-            '''store best value'''
-            torch.max(torch.stack((self.d_tot_ind_val, self.d_ind_val)), 0, out=(self.d_tot_ind_val, self.d_ind_val_argmax))
-            self.d_tot_ind = torch.stack((self.d_tot_ind, self.d_ind))[self.d_ind_val_argmax, torch.arange(self.bat_size_n)] 
+    def calculate_energy_for_sampled_x(self):
+        """
+        计算Brenier势函数 uₕ : Ω → ℝ，uₕ(x) = maxᵢ₌₁ⁿ {πₕ,ᵢ(x)}，其中πₕ,ᵢ(x) = ⟨x, yᵢ⟩ + hᵢ是对应于yᵢ ∈ Y的支撑平面
+        Wi 是源分布的胞腔分解，wi是他的度量
+        ci 是 Wi的质心，也是势能平面和源分布之间的体积
+
+        计算每个单元 \(W_i(h)\) 的 \(\mu\)-体积 \(w_i(h)\)，这可以使用传统的蒙特卡洛方法进行估计。
+        我们从 \(\mu\) 分布中抽取 \(N\) 个随机样本 \(\{x_j\} \sim_{i.i.d.} \mu\)，每个单元的估计 \(\mu\)-体积为 \(\hat{w}_i(h) = \#\{j \in \mathcal{J} \mid x_j \in W_i(h)\}/N\)。
+        给定 \(x_j\)，我们可以通过 \(i = \arg\max_i \{(x_j, y_i) + h_i\}, i = 1, 2, \ldots, n\) 找到 \(x_j \in W_i \)。
+        当 \(N\) 足够大时，\(\hat{w}_i(h)\) 会收敛到 \(w_i(h)\)。
+        """
+        self.d_total_max.fill_(-1e30)
+        self.d_total_ind.fill_(-1)
+        i = 0
+        while i < self.y_nums // self.bat_size_y:
+            temp_targets = self.y_features_cpu[i * self.bat_size_y:(i + 1) * self.bat_size_y]
+            temp_targets = temp_targets.view(temp_targets.shape[0], -1)
+
+            '''U=Y@X+H'''
+            self.d_temp_h = self.d_h[i * self.bat_size_y:(i + 1) * self.bat_size_y]
+            self.d_temp_targets.copy_(temp_targets)
+            # matrix multiple: [batch_size_y, dim] @ [batch_size_x, dim].transpose = [batch_size_y, batch_size_x]
+            torch.mm(self.d_temp_targets, self.d_sampled_x.t(), out=self.d_U)
+            torch.add(self.d_U, self.d_temp_h.expand([self.bat_size_x, -1]).t(), out=self.d_U)
+            '''compute batch max'''
+            # This line computes the maximum values and their indices for each X (compare across Y, dimension 0 of self.d_U).
+            # The maximum values are stored in self.d_ind_val and the indices are stored in self.d_index.
+            # [batch_size_y, batch_size_x] => batch_size_x, batch_size_x
+            torch.max(self.d_U, 0, out=(self.d_batch_max, self.d_batch_index))
+            '''update to real index in all targets'''
+            self.d_batch_index.add_(i * self.bat_size_y)
+            '''store max value across batches'''
+            # chose between d_total_max & d_batch_max
+            torch.max(torch.stack((self.d_total_max, self.d_batch_max)), 0, out=(self.d_total_max, self.d_max_in_0_or_1))
+            # chose between d_total_ind & d_index
+            self.d_total_ind = torch.stack((self.d_total_ind, self.d_batch_index))[self.d_max_in_0_or_1, torch.arange(self.bat_size_x)]
             '''add step'''
-            i = i+1
-            
-        '''calculate histogram'''
-        self.d_g.copy_(torch.bincount(self.d_tot_ind, minlength=self.num_P))
-        self.d_g.div_(self.bat_size_n)
-        
+            i = i + 1
+
+        # group by Yi, then count
+        self.d_wi.copy_(torch.bincount(self.d_total_ind, minlength=self.y_nums))
+        '''calculate ŵ i(h):每个单元的μ-体积是ŵ i(h)= #{j ∈ J | x_j ∈ W_i(h)}/N'''
+        self.d_wi.div_(self.bat_size_x)
 
     def update_h(self):
-        '''Calculate the update step based on gradient'''
-        self.d_g -= 1./self.num_P
+        """Calculate the update step based on gradient"""
+        """∇h ≈ (ŵ i(h) - vi)^T"""
+        self.d_wi -= 1. / self.y_nums
+        """update ∇h by Adam algo"""
         self.d_adam_m *= 0.9
-        self.d_adam_m += 0.1*self.d_g
+        self.d_adam_m += 0.1 * self.d_wi
         self.d_adam_v *= 0.999
-        self.d_adam_v += 0.001*torch.mul(self.d_g,self.d_g)
-        torch.mul(torch.div(self.d_adam_m, torch.add(torch.sqrt(self.d_adam_v),1e-8)),-self.lr,out=self.d_delta_h)
+        self.d_adam_v += 0.001 * torch.mul(self.d_wi, self.d_wi)
+        torch.mul(torch.div(self.d_adam_m, torch.add(torch.sqrt(self.d_adam_v), 1e-8)), -self.lr, out=self.d_delta_h)
         torch.add(self.d_h, self.d_delta_h, out=self.d_h)
-        '''normalize h'''
+        """∇h = ∇h - mean(∇h)"""
         self.d_h -= torch.mean(self.d_h)
 
-
-    def run_gd(self, last_step=0, num_bat=1):
+    def run_gradient_descent(self, last_step=0, num_bat=1):
         """Gradient descent method. Update self.d_h to the optimal solution.
         Args:
             last_step: Iteration performed before the calling. Used when resuming the training. Default [0].
             num_bat: Starting number of mini-batch of Monte-Carlo samples. Value of num_bat will increase during iteration. Default [1].
-                     total number of MC samples used in each iteration = self.batch_size_n * num_bat
+                     total number of MC samples used in each iteration = self.batch_size_x * num_bat
         Returns:
             self.d_h: Optimal value of h (the variable to be optimized of the variational Energy).
         """
-        g_ratio = 1e20
+        wi_ratio = 1e20
         best_g_norm = 1e20
-        curr_best_g_norm = 1e20
+        curr_best_wi_norm = 1e20
         steps = 0
         count_bad = 0
         dyn_num_bat_n = num_bat
@@ -142,61 +160,65 @@ class OMTRaw():
         m_file_list = []
         v_file_list = []
 
-        while(steps <= self.max_iter):
+        while steps <= self.max_iter:
             self.qrng.reset()
-            self.d_g_sum.fill_(0.)
+            self.d_wi_sum.fill_(0.)
             for count in range(dyn_num_bat_n):
-                self.pre_cal(count)
-                self.cal_measure()
-                torch.add(self.d_g_sum, self.d_g, out=self.d_g_sum)
+                self.generate_samples(count)
+                self.calculate_energy_for_sampled_x()
+                torch.add(self.d_wi_sum, self.d_wi, out=self.d_wi_sum)
 
-            torch.div(self.d_g_sum, dyn_num_bat_n, out=self.d_g)			
+            # calculate avg
+            torch.div(self.d_wi_sum, dyn_num_bat_n, out=self.d_wi)
             self.update_h()
 
-            g_norm = torch.sqrt(torch.sum(torch.mul(self.d_g,self.d_g)))
-            num_zero = torch.sum(self.d_g == -1./self.num_P)
+            # √Σwi
+            wi_norm = torch.sqrt(torch.sum(torch.mul(self.d_wi, self.d_wi)))
+            # Σ(wi - vi)
+            num_zero = torch.sum(self.d_wi == -1. / self.y_nums)
 
-            torch.abs(self.d_g, out=self.d_g)
-            g_ratio = torch.max(self.d_g)*self.num_P
-            
-            print('[{0}/{1}] Max absolute error ratio: {2:.3f}. g norm: {3:.6f}. num zero: {4:d}'.format(
-                steps, self.max_iter, g_ratio, g_norm, num_zero))
+            torch.abs(self.d_wi, out=self.d_wi)
+            wi_ratio = torch.max(self.d_wi) * self.y_nums
 
-            if g_norm < 2e-3:
+            print('[{0}/{1}] Max absolute error ratio: {2:.3f}. wi norm: {3:.6f}. num zero: {4:d}'.format(
+                steps, self.max_iter, wi_ratio, wi_norm, num_zero))
+
+            if wi_norm < 2e-3:
                 # torch.save(self.d_h, './h_final.pt')
                 return
 
+            self.save_state(h_file_list, last_step, m_file_list, steps, v_file_list)
 
-            torch.save(self.d_h, './h/{}.pt'.format(steps+last_step))
-            torch.save(self.d_adam_m, './adam_m/{}.pt'.format(steps+last_step))
-            torch.save(self.d_adam_v, './adam_v/{}.pt'.format(steps+last_step))
-            h_file_list.append('./h/{}.pt'.format(steps+last_step))
-            m_file_list.append('./adam_m/{}.pt'.format(steps+last_step))
-            v_file_list.append('./adam_v/{}.pt'.format(steps+last_step))
-            if len(h_file_list)>5:
-                if os.path.exists(h_file_list[0]):
-                    os.remove(h_file_list[0])
-                h_file_list.pop(0)
-                if os.path.exists(v_file_list[0]):
-                    os.remove(v_file_list[0])
-                v_file_list.pop(0)
-                if os.path.exists(m_file_list[0]):
-                    os.remove(m_file_list[0])
-                m_file_list.pop(0)
-
-            if g_norm <= curr_best_g_norm:
-                curr_best_g_norm = g_norm
+            if wi_norm <= curr_best_wi_norm:
+                curr_best_wi_norm = wi_norm
                 count_bad = 0
             else:
                 count_bad += 1
             if count_bad > 30:
                 dyn_num_bat_n *= 2
-                print('bat_size_n has increased to {}'.format(dyn_num_bat_n*self.bat_size_n))
+                print('bat_size_n has increased to {}'.format(dyn_num_bat_n * self.bat_size_x))
                 count_bad = 0
-                curr_best_g_norm = 1e20
+                curr_best_wi_norm = 1e20
 
             steps += 1
 
+    def save_state(self, h_file_list, last_step, m_file_list, steps, v_file_list):
+        torch.save(self.d_h, './h/{}.pt'.format(steps + last_step))
+        torch.save(self.d_adam_m, './adam_m/{}.pt'.format(steps + last_step))
+        torch.save(self.d_adam_v, './adam_v/{}.pt'.format(steps + last_step))
+        h_file_list.append('./h/{}.pt'.format(steps + last_step))
+        m_file_list.append('./adam_m/{}.pt'.format(steps + last_step))
+        v_file_list.append('./adam_v/{}.pt'.format(steps + last_step))
+        if len(h_file_list) > 5:
+            if os.path.exists(h_file_list[0]):
+                os.remove(h_file_list[0])
+            h_file_list.pop(0)
+            if os.path.exists(v_file_list[0]):
+                os.remove(v_file_list[0])
+            v_file_list.pop(0)
+            if os.path.exists(m_file_list[0]):
+                os.remove(m_file_list[0])
+            m_file_list.pop(0)
 
     def set_h(self, h_tensor):
         self.d_h.copy_(h_tensor)
@@ -206,6 +228,7 @@ class OMTRaw():
 
     def set_adam_v(self, adam_v_tensor):
         self.d_adam_v.copy_(adam_v_tensor)
+
 
 def clear_file_in_folder(folder):
     for filename in os.listdir(folder):
@@ -218,42 +241,44 @@ def clear_file_in_folder(folder):
         except Exception as e:
             print('Failed to delete %s. Reason: %s' % (file_path, e))
 
+
 def clear_temp_data():
     folder_names = ['./adam_m', './adam_v', 'h']
     for folder in folder_names:
         clear_file_in_folder(folder)
+
 
 def load_last_file(path, file_ext):
     if not os.path.exists(path):
         os.makedirs(path)
         return None, None
     files = [f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]
-    file_ids = [(int(f.split('.')[0]), os.path.join(path,f)) for f in files]
+    file_ids = [(int(f.split('.')[0]), os.path.join(path, f)) for f in files]
     if not file_ids:
         return None, None
     else:
-        last_f_id, last_f = max(file_ids, key=lambda item:item[0])
+        last_f_id, last_f = max(file_ids, key=lambda item: item[0])
         print('Last' + path + ': ', last_f_id)
         return last_f_id, last_f
 
 
-def train_omt(p_s: OMTRaw, num_bat=1):
+def train_omt(model: OMTRaw, num_bat=1):
     last_step = 0
     '''load last trained model parameters and last omt parameters'''
     h_id, h_file = load_last_file('./h', '.pt')
     adam_m_id, m_file = load_last_file('./adam_m', '.pt')
     adam_v_id, v_file = load_last_file('./adam_v', '.pt')
     if h_id != None:
-        if h_id != adam_m_id or h_id!= adam_v_id:
+        if h_id != adam_m_id or h_id != adam_v_id:
             sys.exit('Error: h, adam_m, adam_v file log does not match')
         elif h_id != None and adam_m_id != None and adam_v_id != None:
             last_step = h_id
-            p_s.set_h(torch.load(h_file))
-            p_s.set_adam_m(torch.load(m_file))
-            p_s.set_adam_v(torch.load(v_file))
+            model.set_h(torch.load(h_file))
+            model.set_adam_m(torch.load(m_file))
+            model.set_adam_v(torch.load(v_file))
 
     '''run gradient descent'''
-    p_s.run_gd(last_step=last_step, num_bat=num_bat)
+    model.run_gradient_descent(last_step=last_step, num_bat=num_bat)
 
     '''record result'''
     # np.savetxt('./h_final.csv',p_s.d_h.cpu().numpy(), delimiter=',')

@@ -17,10 +17,10 @@ class PathType(IntEnum):
     train = 0
     test = 1
     model = 2
-    feature = 3
+    result = 3
 
 
-def path(path_type: PathType, root_dir: str) -> str:
+def path(path_type: PathType, root_dir: str, filename: str = "feature.pt") -> str:
     if path_type == PathType.train:
         dir = os.path.join(root_dir, "train")
         if not os.path.exists(dir):
@@ -36,15 +36,15 @@ def path(path_type: PathType, root_dir: str) -> str:
         if not os.path.exists(dir):
             os.makedirs(dir)
         return dir
-    elif path_type == PathType.feature:
-        return os.path.join(root_dir, "feature", "feature.pt")
+    elif path_type == PathType.result:
+        return os.path.join(root_dir, "result", filename)
 
 
 def train_coder(dim: int, coder_dir: str) -> coder.Autoencoder:
     data_path = path(PathType.train, coder_dir)
     test_path = path(PathType.test, coder_dir)
     model_path = path(PathType.model, coder_dir)
-    feature_path = path(PathType.feature, coder_dir)
+    feature_path = path(PathType.result, coder_dir)
 
     encoder = coder.Autoencoder(latent_dim=dim).cuda()
 
@@ -60,7 +60,7 @@ def train_coder(dim: int, coder_dir: str) -> coder.Autoencoder:
 
 def train_ot(feature_dir: str, ot_dir: str):
     ot_model_path = path(PathType.model, ot_dir)
-    ot_feature_path = path(PathType.feature, ot_dir)
+    ot_feature_path = path(PathType.result, ot_dir)
     ot.compute_ot(feature_dir, ot_model_path, ot_feature_path)
 
 
@@ -75,7 +75,7 @@ def train(args: argparse.Namespace) -> coder.Autoencoder:
     # train encoder & decoder
     encoder = train_coder(args.latent_dim, coder_dir)
     # train ot: forward & backward, two ot
-    train_ot(path(PathType.feature, coder_dir), ot_dir)
+    train_ot(path(PathType.result, coder_dir), ot_dir)
     # train transformer
     train_transformer()
     return encoder
