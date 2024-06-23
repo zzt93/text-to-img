@@ -6,6 +6,7 @@ from enum import IntEnum
 
 import torch.nn as nn
 import torch
+from torch.utils.data import DataLoader
 from torchvision.transforms import transforms
 
 import P_loader
@@ -41,21 +42,33 @@ def path(path_type: PathType, root_dir: str, filename: str = "feature.pt") -> st
 
 
 def train_coder(dim: int, coder_dir: str) -> coder.Autoencoder:
+    print('train coder [dim={}, dir={}]'.format(dim, coder_dir))
+
     data_path = path(PathType.train, coder_dir)
     test_path = path(PathType.test, coder_dir)
     model_path = path(PathType.model, coder_dir)
     feature_path = path(PathType.result, coder_dir)
 
-    encoder = coder.Autoencoder(latent_dim=dim).cuda()
-
     img_transform = transforms.Compose([transforms.ToTensor()])
     dataset = P_loader.P_loader(root=data_path, transform=img_transform)
     testset = P_loader.P_loader(root=test_path, transform=img_transform)
-    coder.train(encoder, dataset, testset, model_path)
-    coder.refine(encoder, dataset, model_path)
+    batch_size = 512
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+    testloader = DataLoader(testset, batch_size=batch_size, shuffle=False, num_workers=4)
+
+    encoder = coder.Autoencoder(latent_dim=dim, img_dim=img_dim(dataloader)).cuda()
+    coder.train(encoder, dataloader, testloader, model_path)
+    coder.refine(encoder, dataloader, model_path)
 
     coder.extract_features(encoder, dataset, feature_path)
     return encoder
+
+
+def img_dim(loader: DataLoader):
+    dataiter = iter(loader)
+    images, _, _ = next(dataiter)
+    # torch.Size([batch_size, dim_color, 28, 28])
+    return images[0].shape[2]
 
 
 def train_ot(feature_dir: str, ot_dir: str):
@@ -102,8 +115,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--train", help="whether to train", dest='train', type=bool, default=True)
     parser.add_argument("--predict", help="whether to predict", dest='predict', type=bool, default=True)
-    parser.add_argument("--coder-dir", help='path_type to coder root dir', type=str, metavar="", dest="coder_dir", default="./coder")
-    parser.add_argument("--ot-dir", help='path_type to OT root dir', type=str, metavar="", dest="ot_dir", default="./ot")
+    parser.add_argument("--coder-dir", help='path_type to coder root dir', type=str, metavar="", dest="coder_dir",
+                        default="./coder")
+    parser.add_argument("--ot-dir", help='path_type to OT root dir', type=str, metavar="", dest="ot_dir",
+                        default="./ot")
     parser.add_argument("--latent-dim", help='', type=int, metavar="", dest="latent_dim", default=2)
     args = parser.parse_args()
 

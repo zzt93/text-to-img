@@ -17,70 +17,81 @@ import P_loader
 
 
 class Autoencoder(nn.Module):
-    def __init__(self, latent_dim=100, dim_color=3, dim_f=16):
+    def __init__(self, latent_dim=100, dim_color=3, dim_f=16, img_dim=64):
         r"""
         :param latent_dim: 
-        :param dim_color: epresent the number of color channels (e.g., RGB images where dim_c=3).
+        :param dim_color: represent the number of color channels (e.g., RGB images where dim_c=3).
         :param dim_f: represent the number of feature maps or filters typically used in convolutional layers.
         """
         super(Autoencoder, self).__init__()
         self.dim_c = dim_color
         self.dim_z = latent_dim
+        step = [2, 2, 2, 2, 1]
+        first_padding = 1
+        if 64 > img_dim >= 32:
+            step[3] = 1
+        elif img_dim < 32:
+            step[3] = 1
+            first_padding = first_padding + int((32 - img_dim)/2)
+        else:
+            raise Exception("unimplemented")
 
         self.block1 = nn.Sequential(
-            # [-1, 3, 32, 32] -> [-1, 128, 16, 16]
-            nn.Conv2d(3, dim_f, 4, 2, 1),
+            # kernel 4*4
+            # [batch_size, dim_color=3, img.shape0=32, img.shape1=32] -> [batch_size, dim_f, img.shape0/stride=16, img.shape1/stride=16]
+            nn.Conv2d(dim_color, dim_f, 4, step[0], first_padding),
             nn.LeakyReLU(0.1, inplace=True),
         )
 
         self.block2 = nn.Sequential(
-            # [-1, 256, 8, 8]
-            nn.Conv2d(dim_f, dim_f * 2, 4, 2, 1),
+            # ->[batch_size, dim*2, shape0/4=8, shape1/4=]
+            nn.Conv2d(dim_f, dim_f * 2, 4, step[1], 1),
             nn.BatchNorm2d(dim_f * 2),
             nn.LeakyReLU(0.1, inplace=True),
         )
 
         self.block3 = nn.Sequential(
-            # [-1, 512, 4, 4]
-            nn.Conv2d(dim_f * 2, dim_f * 4, 4, 2, 1),
+            # ->[batch_size, dim*4, shape0/8, shape1/8=]
+            nn.Conv2d(dim_f * 2, dim_f * 4, 4, step[2], 1),
             nn.BatchNorm2d(dim_f * 4),
             nn.LeakyReLU(0.1, inplace=True),
         )
 
         self.block4 = nn.Sequential(
-            nn.Conv2d(dim_f * 4, dim_f * 8, 4, 2, 1),
+            # ->[batch_size, dim*8, shape0/16, shape1/16]
+            nn.Conv2d(dim_f * 4, dim_f * 8, 4, step[3], 1),
             nn.BatchNorm2d(dim_f * 8),
             nn.LeakyReLU(0.1, inplace=True),
         )
 
         self.block5 = nn.Sequential(
-            # [-1, 1 + cc_dim + dc_dim, 1, 1]
+            # ->[batch_size, latent_dim, shape0/16*stride, shape1/16*stride]
             # 2维卷积层，其中输入通道数为dim_f * 8，输出通道数为latent_dim，卷积核大小为4，步长为1，填充为0
-            nn.Conv2d(dim_f * 8, latent_dim, 4, 1, 0)
+            nn.Conv2d(dim_f * 8, latent_dim, 4, step[4], 0)
         )
 
-        self.block6 = nn.ConvTranspose2d(latent_dim, dim_f * 8, 4, 1, 0)
+        self.block6 = nn.ConvTranspose2d(latent_dim, dim_f * 8, 4, step[4], 0)
 
         self.block7 = nn.Sequential(
-            nn.ConvTranspose2d(dim_f * 8, dim_f * 4, 4, 2, 1),
+            nn.ConvTranspose2d(dim_f * 8, dim_f * 4, 4, step[3], 1),
             nn.BatchNorm2d(dim_f * 4),
             nn.ReLU(),
         )
 
         self.block8 = nn.Sequential(
-            nn.ConvTranspose2d(dim_f * 4, dim_f * 2, 4, 2, 1),
+            nn.ConvTranspose2d(dim_f * 4, dim_f * 2, 4, step[2], 1),
             nn.BatchNorm2d(dim_f * 2),
             nn.ReLU(),
         )
 
         self.block9 = nn.Sequential(
-            nn.ConvTranspose2d(dim_f * 2, dim_f, 4, 2, 1),
+            nn.ConvTranspose2d(dim_f * 2, dim_f, 4, step[1], 1),
             nn.BatchNorm2d(dim_f),
             nn.ReLU(),
         )
 
         self.block10 = nn.Sequential(
-            nn.ConvTranspose2d(dim_f, 3, 4, 2, 1),
+            nn.ConvTranspose2d(dim_f, 3, 4, step[0], first_padding),
             nn.Tanh()
         )
 
@@ -101,10 +112,15 @@ class Autoencoder(nn.Module):
         return x10
 
     def forward(self, x):
+        print(x.shape)
         x1 = self.block1(x)
+        print(x1.shape)
         x2 = self.block2(x1)
+        print(x2.shape)
         x3 = self.block3(x2)
+        print(x3.shape)
         x4 = self.block4(x3)
+        print(x4.shape)
         x5 = self.block5(x4)
 
         x6 = self.block6(x5)
@@ -116,11 +132,10 @@ class Autoencoder(nn.Module):
 
 
 
-def refine(model: Autoencoder, dataset: P_loader, model_path: str, batch_size: int=512, num_epochs: int=10, resume: bool = True, learning_rate: float = 2e-5):
+def refine(model: Autoencoder, dataloader: DataLoader, model_path: str, num_epochs: int=10, resume: bool = True, learning_rate: float = 2e-5):
     r"""
     Refine the model, just use MSE
     :param model:
-    :param dataset:
     :param model_path:
     :param batch_size:
     :param num_epochs:
@@ -154,7 +169,6 @@ def refine(model: Autoencoder, dataset: P_loader, model_path: str, batch_size: i
     # save input test image
     # save_image(test_img[:64], os.path_type.join(img_save_path, 'test_image_input.png'))
 
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4)
     for epoch in range(num_epochs):
         count_train = 0
         loss_train = 0.0
@@ -171,8 +185,7 @@ def refine(model: Autoencoder, dataset: P_loader, model_path: str, batch_size: i
             loss.backward()
             optimizer.step()
             # ===================log========================
-            print('epoch [{}/{}], loss:{:.4f}'
-                  .format(epoch, num_epochs, loss.item()))
+            print('coder refine epoch [{}/{}], loss:{:.4f}'.format(epoch, num_epochs, loss.item()))
             loss_train += loss.item()
             count_train += 1
 
@@ -190,24 +203,23 @@ def refine(model: Autoencoder, dataset: P_loader, model_path: str, batch_size: i
                                                         epoch, loss_train, loss_test)))
 
 
-def train(model: Autoencoder, dataset: P_loader, testset: P_loader, model_path: str, loss_weight: float = 1e-5, batch_size: int=512, num_epochs: int=10, resume: bool = True, learning_rate: float = 2e-5):
+def train(model: Autoencoder, dataloader: DataLoader, testloader: DataLoader, model_path: str, loss_weight: float = 1e-5,
+          num_epochs: int=10, resume: bool = True, learning_rate: float = 2e-5):
     r"""
     trains the autoencoder: loss = MSE + loss_weight * torch.norm(z, 1)
 
     :param model:
-    :param dataset:
-    :param testset:
     :param model_path:
     :param loss_weight:
-    :param batch_size:
     :param num_epochs:
     :param resume:
     :param learning_rate:
     :return:
-    """
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4)
-    testloader = DataLoader(testset, batch_size=batch_size, shuffle=False, num_workers=4)
 
+    Args:
+        testloader ():
+        dataloader ():
+    """
     # for test_data in testloader:
     #     test_img, _, _ = test_data
     #     break
@@ -238,8 +250,7 @@ def train(model: Autoencoder, dataset: P_loader, testset: P_loader, model_path: 
             loss.backward()
             optimizer.step()
             # ===================log========================
-            print('epoch [{}/{}], loss1:{:.4f}, loss2:{:.4f}'
-                  .format(epoch, num_epochs, loss1.item(), loss2.item()))
+            print('coder epoch [{}/{}], loss1:{:.4f}, loss2:{:.4f}'.format(epoch, num_epochs, loss1.item(), loss2.item()))
             loss_train += loss.item()
             count_train += 1
 

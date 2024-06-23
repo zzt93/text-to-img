@@ -77,6 +77,8 @@ class DatasetFolder(data.Dataset):
         if len(samples) == 0:
             raise(RuntimeError("Found 0 files in subfolders of: " + root + "\n"
                                "Supported extensions are: " + ",".join(extensions)))
+        else:
+            print("Found {} files in sub-folders of: {}".format(len(samples), root))
 
         self.root = root
         self.loader = loader
