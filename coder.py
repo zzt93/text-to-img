@@ -15,6 +15,10 @@ from torch.utils.data import DataLoader
 
 import P_loader
 
+_28 = 28
+
+_64 = 64
+
 
 class Autoencoder(nn.Module):
     def __init__(self, latent_dim=100, dim_color=3, dim_f=16, img_dim=64):
@@ -27,108 +31,112 @@ class Autoencoder(nn.Module):
         self.dim_c = dim_color
         self.dim_z = latent_dim
         step = [2, 2, 2, 2, 1]
-        first_padding = 1
-        if 64 > img_dim >= 32:
-            step[3] = 1
-        elif img_dim < 32:
-            step[3] = 1
-            first_padding = first_padding + int((32 - img_dim)/2)
+        padding = [1, 1, 1, 1, 0]
+        if img_dim == _64:
+            pass
+        elif img_dim == _28:
+            padding[0] = padding[0] + int((32 - img_dim)/2)
         else:
             raise Exception("unimplemented")
 
         self.block1 = nn.Sequential(
             # kernel 4*4
             # [batch_size, dim_color=3, img.shape0=32, img.shape1=32] -> [batch_size, dim_f, img.shape0/stride=16, img.shape1/stride=16]
-            nn.Conv2d(dim_color, dim_f, 4, step[0], first_padding),
+            nn.Conv2d(dim_color, dim_f, 4, step[0], padding[0]),
             nn.LeakyReLU(0.1, inplace=True),
         )
 
-        self.block2 = nn.Sequential(
+        block2 = nn.Sequential(
             # ->[batch_size, dim*2, shape0/4=8, shape1/4=]
-            nn.Conv2d(dim_f, dim_f * 2, 4, step[1], 1),
+            nn.Conv2d(dim_f, dim_f * 2, 4, step[1], padding[1]),
             nn.BatchNorm2d(dim_f * 2),
             nn.LeakyReLU(0.1, inplace=True),
         )
 
-        self.block3 = nn.Sequential(
+        block3 = nn.Sequential(
             # ->[batch_size, dim*4, shape0/8, shape1/8=]
-            nn.Conv2d(dim_f * 2, dim_f * 4, 4, step[2], 1),
+            nn.Conv2d(dim_f * 2, dim_f * 4, 4, step[2], padding[2]),
             nn.BatchNorm2d(dim_f * 4),
             nn.LeakyReLU(0.1, inplace=True),
         )
 
-        self.block4 = nn.Sequential(
-            # ->[batch_size, dim*8, shape0/16, shape1/16]
-            nn.Conv2d(dim_f * 4, dim_f * 8, 4, step[3], 1),
-            nn.BatchNorm2d(dim_f * 8),
-            nn.LeakyReLU(0.1, inplace=True),
-        )
+        self.mid_block = []
+        self.mid_block.append(block2)
+        self.mid_block.append(block3)
+
+        last_dim = dim_f * 4
+        if img_dim == _64:
+            block4 = nn.Sequential(
+                # ->[batch_size, dim*8, shape0/16, shape1/16]
+                nn.Conv2d(dim_f * 4, dim_f * 8, 4, step[3], padding[3]),
+                nn.BatchNorm2d(dim_f * 8),
+                nn.LeakyReLU(0.1, inplace=True),
+            )
+            self.mid_block.append(block4)
+            last_dim = dim_f * 8
+
 
         self.block5 = nn.Sequential(
-            # ->[batch_size, latent_dim, shape0/16*stride, shape1/16*stride]
+            # ->[batch_size, latent_dim, shape0/16*1, shape1/16*1]
             # 2维卷积层，其中输入通道数为dim_f * 8，输出通道数为latent_dim，卷积核大小为4，步长为1，填充为0
-            nn.Conv2d(dim_f * 8, latent_dim, 4, step[4], 0)
+            nn.Conv2d(last_dim, latent_dim, 4, step[4], padding[4])
         )
 
-        self.block6 = nn.ConvTranspose2d(latent_dim, dim_f * 8, 4, step[4], 0)
+        self.block6 = nn.ConvTranspose2d(latent_dim, last_dim, 4, step[4], padding[4])
 
-        self.block7 = nn.Sequential(
-            nn.ConvTranspose2d(dim_f * 8, dim_f * 4, 4, step[3], 1),
-            nn.BatchNorm2d(dim_f * 4),
-            nn.ReLU(),
-        )
+        self.reverse_mid_block = []
+        if img_dim == _64:
+            block7 = nn.Sequential(
+                nn.ConvTranspose2d(last_dim, dim_f * 4, 4, step[3], padding[3]),
+                nn.BatchNorm2d(dim_f * 4),
+                nn.ReLU(),
+            )
+            self.reverse_mid_block.append(block7)
 
-        self.block8 = nn.Sequential(
-            nn.ConvTranspose2d(dim_f * 4, dim_f * 2, 4, step[2], 1),
+        block8 = nn.Sequential(
+            nn.ConvTranspose2d(dim_f * 4, dim_f * 2, 4, step[2], padding[2]),
             nn.BatchNorm2d(dim_f * 2),
             nn.ReLU(),
         )
 
-        self.block9 = nn.Sequential(
-            nn.ConvTranspose2d(dim_f * 2, dim_f, 4, step[1], 1),
+        block9 = nn.Sequential(
+            nn.ConvTranspose2d(dim_f * 2, dim_f, 4, step[1], padding[1]),
             nn.BatchNorm2d(dim_f),
             nn.ReLU(),
         )
+        self.reverse_mid_block.append(block8)
+        self.reverse_mid_block.append(block9)
 
         self.block10 = nn.Sequential(
-            nn.ConvTranspose2d(dim_f, 3, 4, step[0], first_padding),
+            nn.ConvTranspose2d(dim_f, 3, 4, step[0], padding[0]),
             nn.Tanh()
         )
 
     def encoder(self, x):
         x = self.block1(x)
-        x = self.block2(x)
-        x = self.block3(x)
-        x = self.block4(x)
+        for block in self.mid_block:
+            x = block(x)
         x = self.block5(x)
         return x
 
     def decoder(self, z):
-        x6 = self.block6(z)
-        x7 = self.block7(x6)
-        x8 = self.block8(x7)
-        x9 = self.block9(x8)
-        x10 = self.block10(x9)
-        return x10
+        z = self.block6(z)
+        for block in self.reverse_mid_block:
+            z = block(z)
+        z = self.block10(z)
+        return z
 
     def forward(self, x):
-        print(x.shape)
-        x1 = self.block1(x)
-        print(x1.shape)
-        x2 = self.block2(x1)
-        print(x2.shape)
-        x3 = self.block3(x2)
-        print(x3.shape)
-        x4 = self.block4(x3)
-        print(x4.shape)
-        x5 = self.block5(x4)
+        x = self.block1(x)
+        for block in self.mid_block:
+            x = block(x)
+        y = self.block5(x)
 
-        x6 = self.block6(x5)
-        x7 = self.block7(x6)
-        x8 = self.block8(x7)
-        x9 = self.block9(x8)
-        x10 = self.block10(x9)
-        return x10, x5
+        y = self.block6(y)
+        for block in self.reverse_mid_block:
+            y = block(y)
+        z = self.block10(y)
+        return z, y
 
 
 
