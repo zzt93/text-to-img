@@ -60,7 +60,7 @@ class Autoencoder(nn.Module):
             nn.LeakyReLU(0.1, inplace=True),
         )
 
-        self.mid_block = []
+        self.mid_block = nn.Sequential()
         self.mid_block.append(block2)
         self.mid_block.append(block3)
 
@@ -84,7 +84,7 @@ class Autoencoder(nn.Module):
 
         self.block6 = nn.ConvTranspose2d(latent_dim, last_dim, 4, step[4], padding[4])
 
-        self.reverse_mid_block = []
+        self.reverse_mid_block = nn.Sequential()
         if img_dim == _64:
             block7 = nn.Sequential(
                 nn.ConvTranspose2d(last_dim, dim_f * 4, 4, step[3], padding[3]),
