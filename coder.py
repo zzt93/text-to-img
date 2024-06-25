@@ -138,6 +138,13 @@ class Autoencoder(nn.Module):
         z = self.block10(y)
         return z, y
 
+    def opt_eval(self):
+        for param in self.block1.parameters():
+            param.requires_grad = False
+        for param in self.mid_block.parameters():
+            param.requires_grad = False
+        for param in self.block5.parameters():
+            param.requires_grad = False
 
 
 def refine(model: Autoencoder, dataloader: DataLoader, model_path: str, num_epochs: int=10, resume: bool = True, learning_rate: float = 2e-5):
@@ -151,13 +158,6 @@ def refine(model: Autoencoder, dataloader: DataLoader, model_path: str, num_epoc
     :param learning_rate:
     :return:
     """
-    # why just forward?
-    for param in model.block1.parameters():
-        param.requires_grad = False
-    for param in model.mid_block.parameters():
-        param.requires_grad = False
-    for param in model.block5.parameters():
-        param.requires_grad = False
 
     # for test_data in testloader:
     #     test_img, _, _ = test_data
@@ -168,8 +168,7 @@ def refine(model: Autoencoder, dataloader: DataLoader, model_path: str, num_epoc
                 model.load_state_dict(torch.load(os.path.join(model_path, file)))
 
     criterion = nn.MSELoss()
-    optimizer = torch.optim.Adam(
-        model.parameters(), lr=learning_rate)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     # save input test image
     # save_image(test_img[:64], os.path_type.join(img_save_path, 'test_image_input.png'))
@@ -283,6 +282,7 @@ def train(model: Autoencoder, dataloader: DataLoader, testloader: DataLoader, mo
 
 
 def extract_features(model: Autoencoder, dataset: P_loader, feature_save_path: str, batch_size: int=512):
+    model.opt_eval()
     # Create a DataLoader to iterate over the dataset with specified parameters
     dataloader_stable = DataLoader(dataset, batch_size=batch_size, shuffle=False, drop_last=True, num_workers=4)
     # Pre-allocate a tensor to store features for the entire dataset
@@ -314,7 +314,7 @@ def extract_features(model: Autoencoder, dataset: P_loader, feature_save_path: s
     torch.save(features, feature_save_path)
 
 
-def decode_features(model: Autoencoder, gen_im_path: str, model_path: str, gen_feature_path: str, gen_im_pair_path: str, batch_size: int=512):
+def decode_features(model: Autoencoder, gen_im_path: str, gen_feature_path: str, gen_im_pair_path: str, batch_size: int=512):
 
     feature_dict = sio.loadmat(gen_feature_path)
     features = feature_dict['features']
