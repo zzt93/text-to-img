@@ -71,10 +71,10 @@ def img_dim(loader: DataLoader):
     return images[0].shape[2]
 
 
-def train_ot(feature_dir: str, ot_dir: str):
+def train_ot(target_feature_path: str, ot_dir: str):
     ot_model_path = path(PathType.model, ot_dir)
     ot_feature_path = path(PathType.result, ot_dir)
-    ot.compute_ot(feature_dir, ot_model_path, ot_feature_path)
+    ot.compute_ot(target_feature_path, ot_model_path, ot_feature_path)
 
 
 def train_transformer():

@@ -151,13 +151,10 @@ def refine(model: Autoencoder, dataloader: DataLoader, model_path: str, num_epoc
     :param learning_rate:
     :return:
     """
+    # why just forward?
     for param in model.block1.parameters():
         param.requires_grad = False
-    for param in model.block2.parameters():
-        param.requires_grad = False
-    for param in model.block3.parameters():
-        param.requires_grad = False
-    for param in model.block4.parameters():
+    for param in model.mid_block.parameters():
         param.requires_grad = False
     for param in model.block5.parameters():
         param.requires_grad = False
@@ -296,6 +293,7 @@ def extract_features(model: Autoencoder, dataset: P_loader, feature_save_path: s
     # Loop over batches of data in the DataLoader
     for data in dataloader_stable:
         # Unpack the data, since only the images (first item) are needed
+        # TODO save mapping<path,feature> for train_transformer
         img, _, _ = data
         # Move the images to the GPU
         img = img.cuda()
@@ -309,7 +307,7 @@ def extract_features(model: Autoencoder, dataset: P_loader, feature_save_path: s
         # Update the counter
         i += img.shape[0]
         # Print the progress of the feature extraction
-        print('Extracted {}/ features...'.format(i, len(dataset)))
+        print('Extracted {}/{} features...'.format(i, len(dataset)))
     # Truncate the features tensor to the actual number of processed samples
     features = features[:i]
     # Save the extracted features to the specified path_type

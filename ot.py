@@ -34,7 +34,7 @@ def compute_ot(feature_input_path, ot_model_path, gen_feature_path, train: bool 
         gen_P(ot, sample_batch, gen_feature_path, thresh=thresh, topk=topk, dissim=dissim, max_gen_samples=max_gen_samples)
 
 
-def gen_P(p_s: OMTRaw, num_bat_x, generate_path, thresh=-1, topk=5, dissim=0.75, max_gen_samples=None):
+def gen_P(p_s: OMTRaw, num_bat_x, generate_path, thresh:float=-1.0, topk=5, dissim=0.75, max_gen_samples=None):
     num_x = p_s.bat_size_x * num_bat_x
     bat_size_x = p_s.bat_size_x
 
