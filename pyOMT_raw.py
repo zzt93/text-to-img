@@ -22,7 +22,7 @@ class OMTRaw():
     Adam gradient descent method is used here to perform the optimization, and Monte-Carlo integration method is used to calculate the energy.
     """
 
-    def __init__(self, y_features_cpu, y_nums, dim, max_iter, lr, bat_size_y, bat_size_x):
+    def __init__(self, y_features_cpu, y_nums, dim, max_iter, lr, bat_size_y, bat_size_x=1000):
         """Parameters to compute semi-discrete Optimal Transport (OT)
         Args:
             y_features_cpu: vector (CPU vector) storing locations of target points with float type and of shape (num_points, dim).
@@ -116,9 +116,11 @@ class OMTRaw():
             self.d_batch_index.add_(i * self.bat_size_y)
             '''store max value across batches'''
             # chose between d_total_max & d_batch_max
-            torch.max(torch.stack((self.d_total_max, self.d_batch_max)), 0, out=(self.d_total_max, self.d_max_in_0_or_1))
+            torch.max(torch.stack((self.d_total_max, self.d_batch_max)), 0,
+                      out=(self.d_total_max, self.d_max_in_0_or_1))
             # chose between d_total_ind & d_index
-            self.d_total_ind = torch.stack((self.d_total_ind, self.d_batch_index))[self.d_max_in_0_or_1, torch.arange(self.bat_size_x)]
+            self.d_total_ind = torch.stack((self.d_total_ind, self.d_batch_index))[
+                self.d_max_in_0_or_1, torch.arange(self.bat_size_x)]
             '''add step'''
             i = i + 1
 
@@ -150,12 +152,10 @@ class OMTRaw():
         Returns:
             self.d_h: Optimal value of h (the variable to be optimized of the variational Energy).
         """
-        wi_ratio = 1e20
-        best_g_norm = 1e20
         curr_best_wi_norm = 1e20
         steps = 0
         count_bad = 0
-        dyn_num_bat_n = num_bat
+        dyn_num_bat = num_bat
         h_file_list = []
         m_file_list = []
         v_file_list = []
@@ -163,25 +163,25 @@ class OMTRaw():
         while steps <= self.max_iter:
             self.qrng.reset()
             self.d_wi_sum.fill_(0.)
-            for count in range(dyn_num_bat_n):
+            for count in range(dyn_num_bat):
                 self.generate_samples(count)
                 self.calculate_energy_for_sampled_x()
                 torch.add(self.d_wi_sum, self.d_wi, out=self.d_wi_sum)
 
             # calculate avg
-            torch.div(self.d_wi_sum, dyn_num_bat_n, out=self.d_wi)
+            torch.div(self.d_wi_sum, dyn_num_bat, out=self.d_wi)
             self.update_h()
 
-            # √Σwi
+            # 预期 wi == vi，(vi是离散分布，1/N), 所以预期wi是均匀分布，所以使用?
+            #
+            # √Σ(wi-vi)
             wi_norm = torch.sqrt(torch.sum(torch.mul(self.d_wi, self.d_wi)))
-            # Σ(wi - vi)
-            num_zero = torch.sum(self.d_wi == -1. / self.y_nums)
 
             torch.abs(self.d_wi, out=self.d_wi)
             wi_ratio = torch.max(self.d_wi) * self.y_nums
 
-            print('[{0}/{1}] Max absolute error ratio: {2:.3f}. wi norm: {3:.6f}. num zero: {4:d}'.format(
-                steps, self.max_iter, wi_ratio, wi_norm, num_zero))
+            print('train ot [{0}/{1}] max absolute error ratio: {2:.3f}. wi norm: {3:.6f}'.format(
+                steps, self.max_iter, wi_ratio, wi_norm))
 
             if wi_norm < 2e-3:
                 # torch.save(self.d_h, './h_final.pt')
@@ -195,8 +195,8 @@ class OMTRaw():
             else:
                 count_bad += 1
             if count_bad > 30:
-                dyn_num_bat_n *= 2
-                print('bat_size_n has increased to {}'.format(dyn_num_bat_n * self.bat_size_x))
+                dyn_num_bat *= 2
+                print('samples has increased to {}'.format(dyn_num_bat * self.bat_size_x))
                 count_bad = 0
                 curr_best_wi_norm = 1e20
 
@@ -268,10 +268,10 @@ def train_omt(model: OMTRaw, num_bat=1):
     h_id, h_file = load_last_file('./h', '.pt')
     adam_m_id, m_file = load_last_file('./adam_m', '.pt')
     adam_v_id, v_file = load_last_file('./adam_v', '.pt')
-    if h_id != None:
+    if h_id is not None:
         if h_id != adam_m_id or h_id != adam_v_id:
             sys.exit('Error: h, adam_m, adam_v file log does not match')
-        elif h_id != None and adam_m_id != None and adam_v_id != None:
+        elif h_id is not None and adam_m_id is not None and adam_v_id is not None:
             last_step = h_id
             model.set_h(torch.load(h_file))
             model.set_adam_m(torch.load(m_file))

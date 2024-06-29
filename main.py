@@ -71,27 +71,29 @@ def img_dim(loader: DataLoader):
     return images[0].shape[2]
 
 
-def train_ot(target_feature_path: str, ot_dir: str):
-    ot_model_path = path(PathType.model, ot_dir)
-    ot_feature_path = path(PathType.result, ot_dir)
-    ot.compute_ot(target_feature_path, ot_model_path, ot_feature_path)
-
-
 def train_transformer():
     pass
 
 
-def train(args: argparse.Namespace) -> coder.Autoencoder:
+def train(args: argparse.Namespace):
     coder_dir = args.coder_dir
     ot_dir = args.ot_dir
 
     # train encoder & decoder
-    encoder = train_coder(args.latent_dim, coder_dir)
-    # train ot: forward & backward, two ot
-    train_ot(path(PathType.result, coder_dir), ot_dir)
-    # train transformer
-    train_transformer()
-    return encoder
+    if args.train_coder:
+        train_coder(args.latent_dim, coder_dir)
+
+    ot_model_path = path(PathType.model, ot_dir)
+    coder_feature_path = path(PathType.result, coder_dir)
+    cpu_features = torch.load(coder_feature_path)
+    if args.train_ot:
+        ot.compute_ot(cpu_features, ot_model_path)
+    else:
+        ot_feature_path = path(PathType.result, ot_dir)
+        ot.ot_map(cpu_features, ot_model_path, ot_feature_path)
+
+    if args.train_transformer:
+        train_transformer()
 
 
 def load_model(model_pattern: str, model_path: str, model: nn.Module) -> None:
@@ -113,7 +115,9 @@ def predict(args: argparse.Namespace, user_input: str):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--train", help="whether to train", dest='train', type=bool, default=True)
+    parser.add_argument("--train-coder", help="whether to train coder", dest='train_coder', type=bool, default=False)
+    parser.add_argument("--train-ot", help="whether to train ot", dest='train_ot', type=bool, default=True)
+    parser.add_argument("--train-transformer", help="whether to train transformer", dest='train_transformer', type=bool, default=False)
     parser.add_argument("--predict", help="whether to predict", dest='predict', type=bool, default=True)
     parser.add_argument("--coder-dir", help='path_type to coder root dir', type=str, metavar="", dest="coder_dir",
                         default="./coder")
@@ -122,7 +126,7 @@ if __name__ == '__main__':
     parser.add_argument("--latent-dim", help='', type=int, metavar="", dest="latent_dim", default=2)
     args = parser.parse_args()
 
-    if args.train:
+    if args.train_coder or args.train_ot or args.train_transformer:
         train(args)
 
     if args.predict:

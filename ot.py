@@ -5,14 +5,10 @@ import torch
 import scipy.io as sio
 
 
-def compute_ot(feature_input_path, ot_model_path, gen_feature_path, train: bool = True, thresh=0.7, topk=20, dissim=0.75, max_gen_samples=None):
-    """args for omt"""
-    cpu_features = torch.load(feature_input_path)
+def compute_ot(cpu_features: torch.tensor, ot_model_path):
     points_num = cpu_features.shape[0]
     dim_y = cpu_features.shape[1]
     max_iter = 20000
-    if not train:
-        max_iter = 0
     lr = 5e-2
     bat_size_device = points_num
     sample_batch_size = 1000
@@ -23,15 +19,17 @@ def compute_ot(feature_input_path, ot_model_path, gen_feature_path, train: bool 
     points_num = cpu_features.shape[0]
 
     ot = OMTRaw(cpu_features, points_num, dim_y, max_iter, lr, bat_size_device, sample_batch_size)
-    '''train omt'''
-    if train:
-        train_omt(ot, init_num_bat_n)
-        torch.save(ot.d_h, ot_model_path)
-    else:
-        sample_batch = 20
-        ot.set_h(torch.load(ot_model_path))
-        '''generate new features'''
-        gen_P(ot, sample_batch, gen_feature_path, thresh=thresh, topk=topk, dissim=dissim, max_gen_samples=max_gen_samples)
+
+    train_omt(ot, init_num_bat_n)
+    torch.save(ot.d_h, ot_model_path)
+
+
+def ot_map(cpu_features: torch.tensor, ot_model_path, gen_feature_path, thresh=0.7, topk=20, dissim=0.75, max_gen_samples=None, sample_batch=20):
+    points_num = cpu_features.shape[0]
+    dim_y = cpu_features.shape[1]
+    ot = OMTRaw(cpu_features, points_num, dim_y, 0, 0, points_num)
+    ot.set_h(torch.load(ot_model_path))
+    gen_P(ot, sample_batch, gen_feature_path, thresh=thresh, topk=topk, dissim=dissim, max_gen_samples=max_gen_samples)
 
 
 def gen_P(p_s: OMTRaw, num_bat_x, generate_path, thresh:float=-1.0, topk=5, dissim=0.75, max_gen_samples=None):
