@@ -22,7 +22,7 @@ class OMTRaw():
     Adam gradient descent method is used here to perform the optimization, and Monte-Carlo integration method is used to calculate the energy.
     """
 
-    def __init__(self, y_features_cpu, y_nums, dim, max_iter, lr, bat_size_y, bat_size_x=1000):
+    def __init__(self, y_features_cpu, y_nums, dim, max_iter, lr, bat_size_y, bat_size_x=1000, model_path='.'):
         """Parameters to compute semi-discrete Optimal Transport (OT)
         Args:
             y_features_cpu: vector (CPU vector) storing locations of target points with float type and of shape (num_points, dim).
@@ -33,6 +33,7 @@ class OMTRaw():
             bat_size_y: Size of mini-batch of cpu_features that feeds to device (i.e. GPU). Positive integer.
             bat_size_x: Size of mini-batch of Monte-Carlo samples on device. The total number of MC samples used in each iteration is batch_size_x * num_bat.
         """
+        self.model_root_path = model_path
         self.y_features_cpu = y_features_cpu
         self.y_nums = y_nums
         self.dim = dim
@@ -174,23 +175,23 @@ class OMTRaw():
 
             # 预期 wi == vi，(vi是离散分布，1/N), 所以预期wi是均匀分布，所以使用?
             #
-            # √Σ(wi-vi)
-            wi_norm = torch.sqrt(torch.sum(torch.mul(self.d_wi, self.d_wi)))
+            # √Σ(wi-vi)^2
+            wi_diff_error = torch.sqrt(torch.sum(torch.mul(self.d_wi, self.d_wi)))
 
             torch.abs(self.d_wi, out=self.d_wi)
             wi_ratio = torch.max(self.d_wi) * self.y_nums
 
-            print('train ot [{0}/{1}] max absolute error ratio: {2:.3f}. wi norm: {3:.6f}'.format(
-                steps, self.max_iter, wi_ratio, wi_norm))
+            print('train ot [{0}/{1}] max absolute error ratio: {2:.3f}. √Σ(wi-vi)^2 : {3:.6f}'.format(
+                steps, self.max_iter, wi_ratio, wi_diff_error))
 
-            if wi_norm < 2e-3:
-                # torch.save(self.d_h, './h_final.pt')
+            if wi_diff_error < 2e-3:
+                # torch.save(self.d_h, self.model_root_path + '/h_final.pt')
                 return
 
             self.save_state(h_file_list, last_step, m_file_list, steps, v_file_list)
 
-            if wi_norm <= curr_best_wi_norm:
-                curr_best_wi_norm = wi_norm
+            if wi_diff_error <= curr_best_wi_norm:
+                curr_best_wi_norm = wi_diff_error
                 count_bad = 0
             else:
                 count_bad += 1
@@ -203,12 +204,13 @@ class OMTRaw():
             steps += 1
 
     def save_state(self, h_file_list, last_step, m_file_list, steps, v_file_list):
-        torch.save(self.d_h, './h/{}.pt'.format(steps + last_step))
-        torch.save(self.d_adam_m, './adam_m/{}.pt'.format(steps + last_step))
-        torch.save(self.d_adam_v, './adam_v/{}.pt'.format(steps + last_step))
-        h_file_list.append('./h/{}.pt'.format(steps + last_step))
-        m_file_list.append('./adam_m/{}.pt'.format(steps + last_step))
-        v_file_list.append('./adam_v/{}.pt'.format(steps + last_step))
+        pt_filename = '{}.pt'.format(steps + last_step)
+        torch.save(self.d_h, self.model_path('h', pt_filename))
+        torch.save(self.d_adam_m, self.model_path('adam_m', pt_filename))
+        torch.save(self.d_adam_v, self.model_path('adam_v', pt_filename))
+        h_file_list.append(self.model_path('h', pt_filename))
+        m_file_list.append(self.model_path('adam_m', pt_filename))
+        v_file_list.append(self.model_path('adam_v', pt_filename))
         if len(h_file_list) > 5:
             if os.path.exists(h_file_list[0]):
                 os.remove(h_file_list[0])
@@ -229,23 +231,11 @@ class OMTRaw():
     def set_adam_v(self, adam_v_tensor):
         self.d_adam_v.copy_(adam_v_tensor)
 
+    def model_path(self, sub: str, file=""):
+        return os.path.join(self.model_root_path, sub, file)
 
-def clear_file_in_folder(folder):
-    for filename in os.listdir(folder):
-        file_path = os.path.join(folder, filename)
-        try:
-            if os.path.isfile(file_path) or os.path.islink(file_path):
-                os.unlink(file_path)
-            elif os.path.isdir(file_path):
-                shutil.rmtree(file_path)
-        except Exception as e:
-            print('Failed to delete %s. Reason: %s' % (file_path, e))
-
-
-def clear_temp_data():
-    folder_names = ['./adam_m', './adam_v', 'h']
-    for folder in folder_names:
-        clear_file_in_folder(folder)
+    def h_path(self):
+        return os.path.join(self.model_root_path, 'h_final.pt')
 
 
 def load_last_file(path, file_ext):
@@ -253,21 +243,29 @@ def load_last_file(path, file_ext):
         os.makedirs(path)
         return None, None
     files = [f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]
-    file_ids = [(int(f.split('.')[0]), os.path.join(path, f)) for f in files]
-    if not file_ids:
+
+    def get_index(f: str):
+        return int(f.split('.')[0])
+    sorted_files = sorted(files, key=get_index)
+    if not sorted_files:
         return None, None
     else:
-        last_f_id, last_f = max(file_ids, key=lambda item: item[0])
+        last = sorted_files[-1]
+        last_f_id, last_f = get_index(last), os.path.join(path, last)
         print('Last' + path + ': ', last_f_id)
+        for f in sorted_files[:-10]:
+            old = os.path.join(path, f)
+            if os.path.exists(old):
+                os.remove(old)
         return last_f_id, last_f
 
 
 def train_omt(model: OMTRaw, num_bat=1):
     last_step = 0
     '''load last trained model parameters and last omt parameters'''
-    h_id, h_file = load_last_file('./h', '.pt')
-    adam_m_id, m_file = load_last_file('./adam_m', '.pt')
-    adam_v_id, v_file = load_last_file('./adam_v', '.pt')
+    h_id, h_file = load_last_file(model.model_path('h'), '.pt')
+    adam_m_id, m_file = load_last_file(model.model_path('adam_m'), '.pt')
+    adam_v_id, v_file = load_last_file(model.model_path('adam_v'), '.pt')
     if h_id is not None:
         if h_id != adam_m_id or h_id != adam_v_id:
             sys.exit('Error: h, adam_m, adam_v file log does not match')
@@ -281,4 +279,4 @@ def train_omt(model: OMTRaw, num_bat=1):
     model.run_gradient_descent(last_step=last_step, num_bat=num_bat)
 
     '''record result'''
-    # np.savetxt('./h_final.csv',p_s.d_h.cpu().numpy(), delimiter=',')
+    # np.savetxt(self.model_root_path + '/h_final.csv',p_s.d_h.cpu().numpy(), delimiter=',')
