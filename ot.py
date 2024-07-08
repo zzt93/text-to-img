@@ -8,7 +8,7 @@ import scipy.io as sio
 def compute_ot(cpu_features: torch.tensor, ot_model_path):
     points_num = cpu_features.shape[0]
     dim_y = cpu_features.shape[1]
-    max_iter = 3000
+    max_iter = 390
     lr = 1e-5
     bat_size_device = points_num
     sample_batch_size = 1000

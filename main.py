@@ -115,8 +115,8 @@ def predict(args: argparse.Namespace, user_input: str):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--train-coder", help="whether to train coder", dest='train_coder', type=bool, default=False)
-    parser.add_argument("--train-ot", help="whether to train ot", dest='train_ot', type=bool, default=True)
+    parser.add_argument("--train-coder", help="whether to train coder", dest='train_coder', type=bool, default=True)
+    parser.add_argument("--train-ot", help="whether to train ot", dest='train_ot', type=bool, default=False)
     parser.add_argument("--train-transformer", help="whether to train transformer", dest='train_transformer', type=bool, default=False)
     parser.add_argument("--predict", help="whether to predict", dest='predict', type=bool, default=True)
     parser.add_argument("--coder-dir", help='path_type to coder root dir', type=str, metavar="", dest="coder_dir",

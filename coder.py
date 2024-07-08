@@ -147,6 +147,46 @@ class Autoencoder(nn.Module):
             param.requires_grad = False
 
 
+class LinerAutoEncoder(Autoencoder):
+    def __init__(self, latent_dim=100, img_size=28):
+        super(LinerAutoEncoder, self).__init__()
+        self.encoder = nn.Sequential(
+            nn.Linear(img_size * img_size, 128),
+            nn.ReLU(),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, 12),
+            nn.ReLU(),
+            nn.Linear(12, latent_dim)
+        )
+        self.decoder = nn.Sequential(
+            nn.Linear(latent_dim, 12),
+            nn.ReLU(),
+            nn.Linear(12, 64),
+            nn.ReLU(),
+            nn.Linear(64, 128),
+            nn.ReLU(),
+            nn.Linear(128, img_size * img_size),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        x = self.encoder(x)
+        x = self.decoder(x)
+        return x
+
+    def encoder(self, x):
+        return self.encoder(x)
+
+    def decoder(self, z):
+        return self.decoder(z)
+
+    def opt_eval(self):
+        for p in self.encoder.parameters():
+            p.requires_grad = False
+
+
+
 def refine(model: Autoencoder, dataloader: DataLoader, model_path: str, num_epochs: int=10, resume: bool = True, learning_rate: float = 2e-5):
     r"""
     Refine the model, just use MSE
@@ -268,6 +308,7 @@ def train(model: Autoencoder, dataloader: DataLoader, testloader: DataLoader, mo
 
         loss_train /= count_train
         loss_test /= count_test
+        print('coder avg loss_train:{:.4f}, loss_test:{:.4f}'.format(loss_train, loss_test))
 
         # out, _ = model(test_img.cuda())
         # pic = out.data.cpu()
@@ -314,9 +355,9 @@ def extract_features(model: Autoencoder, dataset: P_loader, feature_save_path: s
     torch.save(features, feature_save_path)
 
 
-def decode_features(model: Autoencoder, gen_im_path: str, gen_feature_path: str, gen_im_pair_path: str, batch_size: int=512):
+def decode_features(model: Autoencoder, gen_im_path: str, feature_save_path: str, gen_im_pair_path: str, batch_size: int=512):
 
-    feature_dict = sio.loadmat(gen_feature_path)
+    feature_dict = sio.loadmat(feature_save_path)
     features = feature_dict['features']
     ids = feature_dict['ids']
 
