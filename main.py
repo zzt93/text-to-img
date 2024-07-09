@@ -89,8 +89,9 @@ def train(args: argparse.Namespace):
     if args.train_ot:
         ot.compute_ot(cpu_features, ot_model_path)
     else:
-        ot_feature_path = path(PathType.result, ot_dir)
-        ot.ot_map(cpu_features, ot_model_path, ot_feature_path)
+        pass
+        # ot_feature_path = path(PathType.result, ot_dir)
+        # ot.ot_map(cpu_features, ot_model_path, ot_feature_path)
 
     if args.train_transformer:
         train_transformer()

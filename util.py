@@ -12,7 +12,7 @@ def show_encoder_features(features):
         np_array = y.view(3, 28, 28).detach().numpy()
         # For convert the tensor shape from (channels, height, width) to (height, width, channels)
         np_array = np.transpose(np_array, (1, 2, 0))
-        plt.imshow(np_array)
+        plt.imshow(np_array, cmap=plt.cm.gray)
         plt.show()
 
 
