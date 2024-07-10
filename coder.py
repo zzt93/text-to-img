@@ -14,6 +14,7 @@ from torchvision.utils import save_image
 from torch.utils.data import DataLoader
 
 import P_loader
+import util
 
 _28 = 28
 
@@ -203,9 +204,7 @@ def refine(model: Autoencoder, dataloader: DataLoader, model_path: str, num_epoc
     #     test_img, _, _ = test_data
     #     break
     if resume:
-        for file in os.listdir(model_path):
-            if fnmatch.fnmatch(file, 'Epoch_*_sim_autoencoder*.pth'):
-                model.load_state_dict(torch.load(os.path.join(model_path, file)))
+        resume_model(model, model_path)
 
     criterion = nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
@@ -269,9 +268,7 @@ def train(model: Autoencoder, dataloader: DataLoader, testloader: DataLoader, mo
     #     break
 
     if resume:
-        for file in os.listdir(model_path):
-            if fnmatch.fnmatch(file, 'Epoch_*_sim_autoencoder*.pth'):
-                model.load_state_dict(torch.load(os.path.join(model_path, file)))
+        resume_model(model, model_path)
 
     criterion = nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
@@ -320,6 +317,14 @@ def train(model: Autoencoder, dataloader: DataLoader, testloader: DataLoader, mo
                                                     'Epoch_{}_sim_autoencoder_{:04f}_{:04f}.pth'.format(epoch,
                                                                                                         loss_train,
                                                                                                         loss_test)))
+
+
+def resume_model(model: Autoencoder, model_path: str):
+    for file in util.sort_files_by_creation_time(model_path):
+        if fnmatch.fnmatch(file, 'Epoch_*_sim_autoencoder*.pth'):
+            print('resume model using {}'.format(file))
+            model.load_state_dict(torch.load(os.path.join(model_path, file)))
+            return
 
 
 def extract_features(model: Autoencoder, dataset: P_loader, feature_save_path: str, batch_size: int=512):

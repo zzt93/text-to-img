@@ -1,3 +1,6 @@
+import os
+from glob import glob
+
 import coder
 import matplotlib.pyplot as plt
 import numpy as np  # linear algebra
@@ -30,3 +33,17 @@ def img_paths():
         p += paths
 
     print(p)
+
+
+def get_creation_time(file_path):
+    stat = os.stat(file_path)
+    try:
+        return stat.st_birthtime
+    except AttributeError:
+        return stat.st_mtime  # Use last modified time as a fallback
+
+
+def sort_files_by_creation_time(directory, reverse=True):
+    files = glob(os.path.join(directory, '*'))
+    sorted_files = sorted(files, key=get_creation_time, reverse=reverse)
+    return sorted_files
