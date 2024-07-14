@@ -155,21 +155,23 @@ class LinerAutoEncoder(Autoencoder):
         self.img_dim = img_dim
         self.latent_dim = latent_dim
         first = 1000
+        second = 1000
+        last = 12
         self._encoder = nn.Sequential(
             nn.Linear(img_dim * img_dim, first),
             nn.ReLU(),
-            nn.Linear(first, 64),
+            nn.Linear(first, second),
             nn.ReLU(),
-            nn.Linear(64, 12),
+            nn.Linear(second, last),
             nn.ReLU(),
-            nn.Linear(12, latent_dim)
+            nn.Linear(last, latent_dim)
         )
         self._decoder = nn.Sequential(
-            nn.Linear(latent_dim, 12),
+            nn.Linear(latent_dim, last),
             nn.ReLU(),
-            nn.Linear(12, 64),
+            nn.Linear(last, second),
             nn.ReLU(),
-            nn.Linear(64, first),
+            nn.Linear(second, first),
             nn.ReLU(),
             nn.Linear(first, img_dim * img_dim),
             nn.Sigmoid()
@@ -197,7 +199,7 @@ class LinerAutoEncoder(Autoencoder):
             p.requires_grad = False
 
 
-def refine(model: Autoencoder, dataloader: DataLoader, testloader: DataLoader, model_path: str, num_epochs: int=100, resume: bool = True, learning_rate: float = 2e-3):
+def refine(model: Autoencoder, dataloader: DataLoader, testloader: DataLoader, model_path: str, num_epochs: int=100, resume: bool = True, learning_rate: float = 2e-4):
     r"""
     Refine the model, just use MSE
     :param model:
