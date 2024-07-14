@@ -29,10 +29,10 @@ def is_image_file(filename):
     return has_file_allowed_extension(filename, IMG_EXTENSIONS)
 
 
-def make_dataset(dir, class_to_idx, extensions):
+def make_dataset(dir, classes: list, extensions):
     images = []
     dir = os.path.expanduser(dir)
-    for target in sorted(class_to_idx.keys()):
+    for target in classes:
         d = os.path.join(dir, target)
         if not os.path.isdir(d):
             continue
@@ -41,7 +41,7 @@ def make_dataset(dir, class_to_idx, extensions):
             for fname in sorted(fnames):
                 if has_file_allowed_extension(fname, extensions):
                     path = os.path.join(root, fname)
-                    item = (path, class_to_idx[target])
+                    item = (path, target)
                     images.append(item)
 
     return images
@@ -66,14 +66,13 @@ class DatasetFolder(data.Dataset):
             in the target and transforms it.
      Attributes:
         classes (list): List of the class names.
-        class_to_idx (dict): Dict with items (class_name, class_index).
         samples (list): List of (sample path_type, class_index) tuples
         targets (list): The class_index value for each image in the dataset
     """
 
     def __init__(self, root, loader, extensions, transform=None, target_transform=None):
-        classes, class_to_idx = self._find_classes(root)
-        samples = make_dataset(root, class_to_idx, extensions)
+        classes = self._find_classes(root)
+        samples = make_dataset(root, classes, extensions)
         if len(samples) == 0:
             raise(RuntimeError("Found 0 files in subfolders of: " + root + "\n"
                                "Supported extensions are: " + ",".join(extensions)))
@@ -85,7 +84,6 @@ class DatasetFolder(data.Dataset):
         self.extensions = extensions
 
         self.classes = classes
-        self.class_to_idx = class_to_idx
         self.samples = samples
         self.targets = [s[1] for s in samples]
 
@@ -108,8 +106,7 @@ class DatasetFolder(data.Dataset):
         else:
             classes = [d for d in os.listdir(dir) if os.path.isdir(os.path.join(dir, d))]
         classes.sort()
-        class_to_idx = {classes[i]: i for i in range(len(classes))}
-        return classes, class_to_idx
+        return classes
 
     def __getitem__(self, index):
         """
@@ -125,7 +122,7 @@ class DatasetFolder(data.Dataset):
         if self.target_transform is not None:
             target = self.target_transform(target)
 
-        return sample, target, path
+        return sample, target
 
     def __len__(self):
         return len(self.samples)

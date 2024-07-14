@@ -51,6 +51,33 @@ class MnistDataloader(object):
         return (x_train, y_train), (x_test, y_test)
 
 
+def download_plot():
+    import torch
+    from torchvision import datasets, transforms
+
+    # 定义变换
+    transform = transforms.Compose([transforms.ToTensor()])
+
+    # 下载并加载测试集
+    test_dataset = datasets.MNIST(root='./mnist', train=False, transform=transform, download=True)
+    test_loader = torch.utils.data.DataLoader(dataset=test_dataset, batch_size=64, shuffle=False)
+
+    # 查看一个批次的数据
+    data_iter = iter(test_loader)
+    images, labels = next(data_iter)
+
+    print("图像张量形状:", images.shape)
+    print("标签:", labels[:10])
+
+    # 查看一张样本图片
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    plt.imshow(np.squeeze(images[0].numpy()), cmap='gray')
+    plt.title("标签: {}".format(labels[0].item()))
+    plt.show()
+
+
 if __name__ == '__main__':
     #
     # Verify Reading Dataset via MnistDataloader class

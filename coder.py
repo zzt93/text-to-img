@@ -3,17 +3,15 @@ import os
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.autograd import Function
 from torch.autograd import Variable
-import pdb
-from torchvision import transforms
 import scipy.io as sio
 from torchvision.utils import save_image
 
 from torch.utils.data import DataLoader
 
 import P_loader
+import numpy as np  # linear algebra
+import matplotlib.pyplot as plt
 import util
 
 _28 = 28
@@ -30,7 +28,7 @@ class Autoencoder(nn.Module):
         """
         super(Autoencoder, self).__init__()
         self.dim_c = dim_color
-        self.dim_z = latent_dim
+        self.latent_dim = latent_dim
         step = [2, 2, 2, 2, 1]
         padding = [1, 1, 1, 1, 0]
         if img_dim == _64:
@@ -127,6 +125,9 @@ class Autoencoder(nn.Module):
         z = self.block10(z)
         return z
 
+    def from_feature(self, x):
+        return x.view(1, -1, 1, 1)
+
     def forward(self, x):
         x = self.block1(x)
         for block in self.mid_block:
@@ -149,46 +150,54 @@ class Autoencoder(nn.Module):
 
 
 class LinerAutoEncoder(Autoencoder):
-    def __init__(self, latent_dim=100, img_size=28):
+    def __init__(self, latent_dim=2, img_dim=28):
         super(LinerAutoEncoder, self).__init__()
-        self.encoder = nn.Sequential(
-            nn.Linear(img_size * img_size, 128),
+        self.img_dim = img_dim
+        self.latent_dim = latent_dim
+        first = 1000
+        self._encoder = nn.Sequential(
+            nn.Linear(img_dim * img_dim, first),
             nn.ReLU(),
-            nn.Linear(128, 64),
+            nn.Linear(first, 64),
             nn.ReLU(),
             nn.Linear(64, 12),
             nn.ReLU(),
             nn.Linear(12, latent_dim)
         )
-        self.decoder = nn.Sequential(
+        self._decoder = nn.Sequential(
             nn.Linear(latent_dim, 12),
             nn.ReLU(),
             nn.Linear(12, 64),
             nn.ReLU(),
-            nn.Linear(64, 128),
+            nn.Linear(64, first),
             nn.ReLU(),
-            nn.Linear(128, img_size * img_size),
+            nn.Linear(first, img_dim * img_dim),
             nn.Sigmoid()
         )
 
     def forward(self, x):
-        x = self.encoder(x)
-        x = self.decoder(x)
-        return x
+        y = self.encoder(x)
+        z = self.decoder(y)
+        return z, y
 
     def encoder(self, x):
-        return self.encoder(x)
+        x = x.view(-1, self.img_dim * self.img_dim)
+        return self._encoder(x)
+
+    def from_feature(self, x):
+        return x.view(1, -1)
 
     def decoder(self, z):
-        return self.decoder(z)
+        z = self._decoder(z)
+        z = z.view(-1, 1, self.img_dim, self.img_dim)
+        return z
 
     def opt_eval(self):
-        for p in self.encoder.parameters():
+        for p in self._encoder.parameters():
             p.requires_grad = False
 
 
-
-def refine(model: Autoencoder, dataloader: DataLoader, model_path: str, num_epochs: int=10, resume: bool = True, learning_rate: float = 2e-5):
+def refine(model: Autoencoder, dataloader: DataLoader, testloader: DataLoader, model_path: str, num_epochs: int=100, resume: bool = True, learning_rate: float = 2e-3):
     r"""
     Refine the model, just use MSE
     :param model:
@@ -201,7 +210,7 @@ def refine(model: Autoencoder, dataloader: DataLoader, model_path: str, num_epoc
     """
 
     # for test_data in testloader:
-    #     test_img, _, _ = test_data
+    #     test_img, _ = test_data
     #     break
     if resume:
         resume_model(model, model_path)
@@ -215,8 +224,10 @@ def refine(model: Autoencoder, dataloader: DataLoader, model_path: str, num_epoc
     for epoch in range(num_epochs):
         count_train = 0
         loss_train = 0.0
+        count_test = 0
+        loss_test = 0.0
         for data in dataloader:
-            img, _, _ = data
+            img, _ = data
             img = Variable(img).cuda()
             # ===================forward=====================
             output, z = model(img)
@@ -228,13 +239,21 @@ def refine(model: Autoencoder, dataloader: DataLoader, model_path: str, num_epoc
             loss.backward()
             optimizer.step()
             # ===================log========================
-            print('coder refine epoch [{}/{}], loss:{:.4f}'.format(epoch, num_epochs, loss.item()))
+            # print('coder refine epoch [{}/{}], loss:{:.4f}'.format(epoch, num_epochs, loss.item()))
             loss_train += loss.item()
             count_train += 1
 
+        for data in testloader:
+            img, _ = data
+            img = Variable(img).cuda()
+            output, _ = model(img)
+            loss = criterion(output, img)
+            loss_test += loss.item()
+            count_test += 1
 
         loss_train /= count_train
-        loss_test = 0
+        loss_test /= count_test
+        print('coder refine epoch [{}/{}], avg loss_train:{:.4f}, loss_test:{:.4f}'.format(epoch, num_epochs, loss_train, loss_test))
         # out, _ = model(test_img.cuda())
         # pic = out.data.cpu()
         # save_image(pic[:64], os.path_type.join(img_save_path,
@@ -242,14 +261,14 @@ def refine(model: Autoencoder, dataloader: DataLoader, model_path: str, num_epoc
         #                                                                                  loss_test)))
 
         torch.save(model.state_dict(), os.path.join(model_path,
-                                                    'Epoch_{}_sim_refine_autoencoder_{:04f}_{:04f}.pth'.format(
+                                                    'Epoch_{}_sim_autoencoder_refine_{:04f}_{:04f}.pth'.format(
                                                         epoch, loss_train, loss_test)))
 
 
-def train(model: Autoencoder, dataloader: DataLoader, testloader: DataLoader, model_path: str, loss_weight: float = 1e-5,
-          num_epochs: int=10, resume: bool = True, learning_rate: float = 2e-5):
+def train(model: Autoencoder, dataloader: DataLoader, testloader: DataLoader, model_path: str, loss_weight: float = 1e-6,
+          num_epochs: int=100, resume: bool = True, learning_rate: float = 2e-3):
     r"""
-    trains the autoencoder: loss = MSE + loss_weight * torch.norm(z, 1)
+    trains the autoencoder: loss = MSE + loss_weight * torch.norm(latent_value, 1)
 
     :param model:
     :param model_path:
@@ -264,7 +283,7 @@ def train(model: Autoencoder, dataloader: DataLoader, testloader: DataLoader, mo
         dataloader ():
     """
     # for test_data in testloader:
-    #     test_img, _, _ = test_data
+    #     test_img, _ = test_data
     #     break
 
     if resume:
@@ -279,24 +298,24 @@ def train(model: Autoencoder, dataloader: DataLoader, testloader: DataLoader, mo
         count_test = 0
         loss_test = 0.0
         for data in dataloader:
-            img, _, _ = data
+            img, _ = data
             img = Variable(img).cuda()
             # ===================forward=====================
-            output, z = model(img)
+            output, latent_value = model(img)
             loss1 = criterion(output, img)
-            loss2 = torch.norm(z, 1)
+            loss2 = torch.norm(latent_value, 1)
             loss = loss1 + loss_weight * loss2
             # ===================backward====================
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             # ===================log========================
-            print('coder epoch [{}/{}], loss1:{:.4f}, loss2:{:.4f}'.format(epoch, num_epochs, loss1.item(), loss2.item()))
+            # print('coder epoch [{}/{}], loss1:{:.4f}, loss2:{:.4f}'.format(epoch, num_epochs, loss1.item(), loss2.item()))
             loss_train += loss.item()
             count_train += 1
 
         for data in testloader:
-            img, _, _ = data
+            img, _ = data
             img = Variable(img).cuda()
             output, _ = model(img)
             loss = criterion(output, img)
@@ -305,7 +324,7 @@ def train(model: Autoencoder, dataloader: DataLoader, testloader: DataLoader, mo
 
         loss_train /= count_train
         loss_test /= count_test
-        print('coder avg loss_train:{:.4f}, loss_test:{:.4f}'.format(loss_train, loss_test))
+        print('coder train epoch [{}/{}], avg loss_train:{:.4f}, loss_test:{:.4f}'.format(epoch, num_epochs, loss_train, loss_test))
 
         # out, _ = model(test_img.cuda())
         # pic = out.data.cpu()
@@ -321,9 +340,10 @@ def train(model: Autoencoder, dataloader: DataLoader, testloader: DataLoader, mo
 
 def resume_model(model: Autoencoder, model_path: str):
     for file in util.sort_files_by_creation_time(model_path):
-        if fnmatch.fnmatch(file, 'Epoch_*_sim_autoencoder*.pth'):
+        filename = os.path.basename(file)
+        if fnmatch.fnmatch(filename, 'Epoch_*_sim_autoencoder*.pth'):
             print('resume model using {}'.format(file))
-            model.load_state_dict(torch.load(os.path.join(model_path, file)))
+            model.load_state_dict(torch.load(file))
             return
 
 
@@ -333,14 +353,13 @@ def extract_features(model: Autoencoder, dataset: P_loader, feature_save_path: s
     dataloader_stable = DataLoader(dataset, batch_size=batch_size, shuffle=False, drop_last=True, num_workers=4)
     # Pre-allocate a tensor to store features for the entire dataset
     # The shape is [number of samples in the dataset, dimension of the encoded features]
-    features = torch.empty([len(dataset), model.dim_z], dtype=torch.float, requires_grad=False, device='cpu')
+    features = torch.empty([len(dataset), model.latent_dim], dtype=torch.float, requires_grad=False, device='cpu')
     # Initialize a counter to keep track of the processed samples
     i = 0
     # Loop over batches of data in the DataLoader
     for data in dataloader_stable:
         # Unpack the data, since only the images (first item) are needed
-        # TODO save mapping<path,feature> for train_transformer
-        img, _, _ = data
+        img, _ = data
         # Move the images to the GPU
         img = img.cuda()
         # Disable gradient computation for these images to save memory and computations
@@ -401,3 +420,17 @@ def decode_features(model: Autoencoder, gen_im_path: str, feature_save_path: str
             count += 1
 
     print('Decoding complete. ')
+
+
+def plot_encoder_features(encoder: Autoencoder, features, labels, model_dir: str = './coder/model', img_dim=28):
+    resume_model(encoder, model_dir)
+    for f, l in zip(features, labels):
+        f = encoder.from_feature(f)
+        y = encoder.decoder(f)
+        # print(y)
+        np_array = y.view(-1, img_dim, img_dim).detach().numpy()
+        # For convert the tensor shape from (channels, height, width) to (height, width, channels)
+        np_array = np.transpose(np_array, (1, 2, 0))
+        plt.imshow(np.squeeze(np_array), cmap=plt.cm.gray)
+        plt.title("标签: {}".format(l))
+        plt.show()

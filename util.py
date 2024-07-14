@@ -1,38 +1,23 @@
 import os
 from glob import glob
+import numpy as np
+import torch
 
-import coder
 import matplotlib.pyplot as plt
-import numpy as np  # linear algebra
 
 
-def show_encoder_features(features):
-    encoder = coder.Autoencoder(latent_dim=2, img_dim=28)
-    for i in features:
-        i = i.view(1, -1, 1, 1)
-        y = encoder.decoder(i)
-        print(y)
-        np_array = y.view(3, 28, 28).detach().numpy()
-        # For convert the tensor shape from (channels, height, width) to (height, width, channels)
-        np_array = np.transpose(np_array, (1, 2, 0))
-        plt.imshow(np_array, cmap=plt.cm.gray)
-        plt.show()
-
-
-def img_paths():
-    from torchvision.transforms import transforms
-    import P_loader
-    from torch.utils.data import DataLoader
+def save_labels():
+    from torchvision import datasets, transforms
 
     img_transform = transforms.Compose([transforms.ToTensor()])
-    dataset = P_loader.P_loader(root='./coder/train', transform=img_transform)
-    dataloader_stable = DataLoader(dataset, batch_size=512, shuffle=False, drop_last=True, num_workers=4)
-    p = []
-    for data in dataloader_stable:
-        _, _, paths = data
-        p += paths
+    train_dataset = datasets.MNIST(root='./coder', train=True, transform=img_transform, download=True)
+    train_loader = torch.utils.data.DataLoader(dataset=train_dataset, batch_size=512, shuffle=False)
 
-    print(p)
+    labels = []
+    for data in train_loader:
+        _, label = data
+        labels += label.tolist()
+    torch.save(labels, './coder/result/label.pth')
 
 
 def get_creation_time(file_path):
@@ -47,3 +32,36 @@ def sort_files_by_creation_time(directory, reverse=True):
     files = glob(os.path.join(directory, '*'))
     sorted_files = sorted(files, key=get_creation_time, reverse=reverse)
     return sorted_files
+
+
+colors = ['Red', 'Green', 'Blue', 'Yellow', 'Purple', 'Orange', 'Pink', 'Brown', 'Black', 'skyblue']
+
+
+def show_feature_distribution(features, labels: list):
+    array = features.numpy()
+
+    m = {}
+    for f, l in zip(array, labels):
+        f = f.reshape(-1,2)
+        if l not in m:
+            m[l] = np.array(f)
+        else:
+            m[l] = np.concatenate((m[l], f), axis=0)
+
+    i = 0
+    for l, f in m.items():
+        # 拆分为x和y坐标
+        x = f[:, 0]
+        y = f[:, 1]
+        # 画点图
+        plt.scatter(x, y, label=l, color=colors[i])
+        i += 1
+
+    # 添加标题和坐标轴标签
+    plt.title("2D Tensor features")
+    plt.xlabel("X-axis")
+    plt.ylabel("Y-axis")
+    plt.legend()
+
+    # 显示图形
+    plt.show()
