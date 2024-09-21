@@ -1,4 +1,5 @@
 import argparse
+import ast
 import fnmatch
 import os
 import sys
@@ -37,11 +38,14 @@ def path(path_type: PathType, root_dir: str, filename: str = "feature.pt") -> st
             os.makedirs(dir)
         return dir
     elif path_type == PathType.result:
-        return os.path.join(root_dir, "result", filename)
+        dir = os.path.join(root_dir, "result")
+        if not os.path.exists(dir):
+            os.makedirs(dir)
+        return os.path.join(dir, filename)
 
 
-def train_coder(dim: int, coder_dir: str, train_option: list) -> coder.Autoencoder:
-    print('train coder [dim={}, dir={}, train_option={}]'.format(dim, coder_dir, train_option))
+def train_coder(dim: int, coder_dir: str, option: list, coder_opt: dict) -> coder.AutoEncoder:
+    print('train coder [dim={}, dir={}, option={}, train_opt={}]'.format(dim, coder_dir, option, coder_opt))
 
     model_path = path(PathType.model, coder_dir)
     feature_path = path(PathType.result, coder_dir)
@@ -54,14 +58,20 @@ def train_coder(dim: int, coder_dir: str, train_option: list) -> coder.Autoencod
     test_dataset = datasets.MNIST(root=coder_dir, train=False, transform=img_transform, download=True)
     test_loader = torch.utils.data.DataLoader(dataset=test_dataset, batch_size=batch_size, shuffle=False)
 
-    encoder = coder.LinerAutoEncoder(latent_dim=dim, img_dim=img_dim(train_loader)).cuda()
-    if 'train' in train_option:
-        coder.train(encoder, train_loader, test_loader, model_path)
-    if 'refine' in train_option:
-        coder.refine(encoder, train_loader, test_loader, model_path)
-    if 'extract' in train_option:
+    img_dime = img_dim(train_loader)
+    encoder = coder.LinerAutoEncoder(latent_dim=dim, dim_color=1, img_dim=img_dime, dim_f=32, kernel_size=2).cuda()
+    if 'cnn' in option:
+        encoder = coder.CnnAutoEncoder(latent_dim=dim, dim_color=1, img_dim=img_dime, dim_f=32, kernel_size=2).cuda()
+    elif 'cnn-l' in option:
+        encoder = coder.CnnLinearAutoEncoder(latent_dim=dim, dim_color=1, img_dim=img_dime, dim_f=32, kernel_size=2).cuda()
+
+    if 'train' in option:
+        coder.train(encoder, train_loader, test_loader, model_path, **coder_opt)
+    if 'refine' in option:
+        coder.refine(encoder, train_loader, test_loader, model_path, **coder_opt)
+    if 'extract' in option:
         coder.resume_model(encoder, model_path)
-        coder.extract_features(encoder, train_dataset, feature_path)
+        coder.extract_features(encoder, train_dataset, feature_path, **coder_opt)
     return encoder
 
 
@@ -79,20 +89,21 @@ def train_transformer():
 def train(args: argparse.Namespace):
     coder_dir = args.coder_dir
     ot_dir = args.ot_dir
+    coder_opt = ast.literal_eval(args.coder_opt)
 
     # train encoder & decoder
     if args.train_coder:
-        train_coder(args.latent_dim, coder_dir, args.train_coder.split(','))
+        train_coder(args.latent_dim, coder_dir, args.train_coder.split(','), coder_opt)
 
     ot_model_path = path(PathType.model, ot_dir)
     coder_feature_path = path(PathType.result, coder_dir)
     cpu_features = torch.load(coder_feature_path)
+    ot_opt = ast.literal_eval(args.ot_opt)
     if args.train_ot:
-        ot.compute_ot(cpu_features, ot_model_path)
+        ot.compute_ot(cpu_features, ot_model_path, ot_opt)
     else:
-        pass
-        # ot_feature_path = path(PathType.result, ot_dir)
-        # ot.ot_map(cpu_features, ot_model_path, ot_feature_path)
+        ot_feature_path = path(PathType.result, ot_dir)
+        ot.ot_map(cpu_features, ot_model_path, ot_feature_path, ot_opt, **ot_opt)
 
     if args.train_transformer:
         train_transformer()
@@ -107,7 +118,6 @@ def load_model(model_pattern: str, model_path: str, model: nn.Module) -> None:
 
 
 def predict(args: argparse.Namespace, user_input: str):
-    model = coder.Autoencoder(args.latent_dim).cuda()
 
     # use transformer to map text to Gaussian latent token
     # use ot to map Gaussian latent token to real data latent token(filter pattern mixture & )
@@ -118,7 +128,10 @@ def predict(args: argparse.Namespace, user_input: str):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--train-coder", help="whether to train coder", dest='train_coder', type=str, default='train,refine,extract')
+    parser.add_argument("--coder-option", help="coder train option", dest='coder_opt', type=str, default="{}")
     parser.add_argument("--train-ot", help="whether to train ot", dest='train_ot', type=bool, default=False)
+    parser.add_argument("--run-ot", help="whether to run ot", dest='run_ot', type=bool, default=False)
+    parser.add_argument("--ot-option", help="ot option", dest='ot_opt', type=str, default="{}")
     parser.add_argument("--train-transformer", help="whether to train transformer", dest='train_transformer', type=bool, default=False)
     parser.add_argument("--predict", help="whether to predict", dest='predict', type=bool, default=True)
     parser.add_argument("--coder-dir", help='path_type to coder root dir', type=str, metavar="", dest="coder_dir",

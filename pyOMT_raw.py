@@ -22,7 +22,7 @@ class OMTRaw():
     Adam gradient descent method is used here to perform the optimization, and Monte-Carlo integration method is used to calculate the energy.
     """
 
-    def __init__(self, y_features_cpu, y_nums, dim, max_iter, lr, bat_size_y, bat_size_x=1000, model_path='.'):
+    def __init__(self, y_features_cpu, y_nums, bat_size_y, dim, max_iter=390, lr=1e-5, bat_size_x=1000, model_path='.', **kwargs):
         """Parameters to compute semi-discrete Optimal Transport (OT)
         Args:
             y_features_cpu: vector (CPU vector) storing locations of target points with float type and of shape (num_points, dim).
@@ -47,7 +47,7 @@ class OMTRaw():
 
         self.num_bat_y = y_nums // bat_size_y
         # !internal variables
-        self.d_G_z = torch.empty(self.bat_size_x * self.dim, dtype=torch.float, device=torch.device('cuda'))
+        # self.d_G_z = torch.empty(self.bat_size_x * self.dim, dtype=torch.float, device=torch.device('cuda'))
         self.d_sampled_x = torch.empty((self.bat_size_x, self.dim), dtype=torch.float, device=torch.device('cuda'))
         # self.d_h: Optimal value of h (the variable to be optimized of the variational Energy).
         self.d_h = torch.zeros(self.y_nums, dtype=torch.float, device=torch.device('cuda'))
@@ -64,7 +64,7 @@ class OMTRaw():
         self.d_adam_v = torch.zeros(self.y_nums, dtype=torch.float, device=torch.device('cuda'))
 
         # !temp variables
-        self.d_U = torch.empty((self.bat_size_y, self.bat_size_x), dtype=torch.float, device=torch.device('cuda'))
+        self.U_h_x = torch.empty((self.bat_size_y, self.bat_size_x), dtype=torch.float, device=torch.device('cuda'))
         self.d_temp_h = torch.empty(self.bat_size_y, dtype=torch.float, device=torch.device('cuda'))
         self.d_temp_targets = torch.empty((self.bat_size_y, self.dim), dtype=torch.float, device=torch.device('cuda'))
 
@@ -106,13 +106,14 @@ class OMTRaw():
             self.d_temp_h = self.d_h[i * self.bat_size_y:(i + 1) * self.bat_size_y]
             self.d_temp_targets.copy_(temp_targets)
             # matrix multiple: [batch_size_y, dim] @ [batch_size_x, dim].transpose = [batch_size_y, batch_size_x]
-            torch.mm(self.d_temp_targets, self.d_sampled_x.t(), out=self.d_U)
-            torch.add(self.d_U, self.d_temp_h.expand([self.bat_size_x, -1]).t(), out=self.d_U)
+            torch.mm(self.d_temp_targets, self.d_sampled_x.t(), out=self.U_h_x)
+            torch.add(self.U_h_x, self.d_temp_h.expand([self.bat_size_x, -1]).t(), out=self.U_h_x)
+
             '''compute batch max'''
-            # This line computes the maximum values and their indices for each X (compare across Y, dimension 0 of self.d_U).
+            # This line computes the maximum values and their indices for each X (compare across Y, dimension 0 of self.U_h_x).
             # The maximum values are stored in self.d_ind_val and the indices are stored in self.d_index.
             # [batch_size_y, batch_size_x] => batch_size_x, batch_size_x
-            torch.max(self.d_U, 0, out=(self.d_batch_max, self.d_batch_index))
+            torch.max(self.U_h_x, 0, out=(self.d_batch_max, self.d_batch_index))
             '''update to real index in all targets'''
             self.d_batch_index.add_(i * self.bat_size_y)
             '''store max value across batches'''
@@ -125,16 +126,17 @@ class OMTRaw():
             '''add step'''
             i = i + 1
 
+        '''计算wi，从而通过梯度下降，优化h'''
         # group by Yi, then count
         self.d_wi.copy_(torch.bincount(self.d_total_ind, minlength=self.y_nums))
-        '''calculate ŵ i(h):每个单元的μ-体积是ŵ i(h)= #{j ∈ J | x_j ∈ W_i(h)}/N'''
+        # calculate ŵ i(h):每个单元的μ-体积是ŵ i(h)= #{j ∈ J | x_j ∈ W_i(h)}/N
         self.d_wi.div_(self.bat_size_x)
 
     def update_h(self):
         """Calculate the update step based on gradient"""
-        """∇h ≈ (ŵ i(h) - vi)^T"""
+        """∇E ≈ (ŵ i(h) - vi)^T"""
         self.d_wi -= 1. / self.y_nums
-        """update ∇h by Adam algo"""
+        """update ∇E by Adam algo"""
         self.d_adam_m *= 0.9
         self.d_adam_m += 0.1 * self.d_wi
         self.d_adam_v *= 0.999
@@ -184,8 +186,8 @@ class OMTRaw():
             print('train ot [{0}/{1}] max absolute error ratio: {2:.3f}. √Σ(wi-vi)^2 : {3:.6f}'.format(
                 steps, self.max_iter, wi_ratio, wi_diff_error))
 
-            if wi_diff_error < 2e-3:
-                # torch.save(self.d_h, self.model_root_path + '/h_final.pt')
+            if dyn_num_bat > 1e6:
+                self.save_state(h_file_list, last_step, m_file_list, steps, v_file_list)
                 return
 
             self.save_state(h_file_list, last_step, m_file_list, steps, v_file_list)

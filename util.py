@@ -38,30 +38,55 @@ colors = ['Red', 'Green', 'Blue', 'Yellow', 'Purple', 'Orange', 'Pink', 'Brown',
 
 
 def show_feature_distribution(features, labels: list):
-    array = features.numpy()
+    if features.shape[1] == 3:
+        x = features[:, 0]
+        y = features[:, 1]
+        z = features[:, 2]
+        c = labels[0:len(x)]
+        c = [colors[k] for k in c]
 
-    m = {}
-    for f, l in zip(array, labels):
-        f = f.reshape(-1,2)
-        if l not in m:
-            m[l] = np.array(f)
-        else:
-            m[l] = np.concatenate((m[l], f), axis=0)
+        # 创建3D图
+        fig = plt.figure(figsize=(10, 8))
+        ax = fig.add_subplot(221, projection='3d')
+        ax.scatter(x, y, z, c=c, alpha=0.5)
+        ax = fig.add_subplot(222, projection='3d')
+        ax.scatter(y, x, z, c=c, alpha=0.5)
+        ax = fig.add_subplot(223, projection='3d')
+        ax.scatter(z, y, x, c=c, alpha=0.5)
+        ax = fig.add_subplot(224, projection='3d')
+        ax.scatter(y, z, x, c=c, alpha=0.5)
+        plt.show()
+    elif features.shape[1] == 2:
+        array = features.numpy()
 
-    i = 0
-    for l, f in m.items():
-        # 拆分为x和y坐标
-        x = f[:, 0]
-        y = f[:, 1]
-        # 画点图
-        plt.scatter(x, y, label=l, color=colors[i])
-        i += 1
+        m = {}
+        for f, l in zip(array, labels):
+            f = f.reshape(-1,2)
+            if l not in m:
+                m[l] = np.array(f)
+            else:
+                m[l] = np.concatenate((m[l], f), axis=0)
 
-    # 添加标题和坐标轴标签
-    plt.title("2D Tensor features")
-    plt.xlabel("X-axis")
-    plt.ylabel("Y-axis")
-    plt.legend()
+        i = 0
+        for l, f in m.items():
+            # 拆分为x和y坐标
+            x = f[:, 0]
+            y = f[:, 1]
+            # 画点图
+            plt.scatter(x, y, label=l, color=colors[i])
+            i += 1
 
-    # 显示图形
-    plt.show()
+        # 添加标题和坐标轴标签
+        plt.title("2D Tensor features")
+        plt.xlabel("X-axis")
+        plt.ylabel("Y-axis")
+        plt.legend()
+
+        # 显示图形
+        plt.show()
+
+
+def removesuffix(input_string, suffix):
+    if suffix and input_string.endswith(suffix):
+        return input_string[:-len(suffix)]
+    return input_string

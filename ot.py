@@ -5,42 +5,42 @@ import torch
 import scipy.io as sio
 
 
-def compute_ot(cpu_features: torch.tensor, ot_model_path):
+def compute_ot(cpu_features: torch.tensor, ot_model_path, ot_opt: dict):
     points_num = cpu_features.shape[0]
     dim_y = cpu_features.shape[1]
-    max_iter = 390
-    lr = 1e-5
     bat_size_device = points_num
-    sample_batch_size = 1000
-    init_num_bat_n = 20
 
     # crop cpu_features to fit bat_size_device
     cpu_features = cpu_features[0 : points_num//bat_size_device*bat_size_device, :]
     points_num = cpu_features.shape[0]
 
-    ot = OMTRaw(cpu_features, points_num, dim_y, max_iter, lr, bat_size_device, sample_batch_size, model_path=ot_model_path)
+    ot = OMTRaw(cpu_features, points_num, bat_size_device, dim_y, ot_opt, **ot_opt, model_path=ot_model_path)
 
+    init_num_bat_n = 20
     train_omt(ot, init_num_bat_n)
     torch.save(ot.d_h, ot.h_path())
 
 
-def ot_map(cpu_features: torch.tensor, ot_model_path, gen_feature_path, thresh=0.7, topk=20, dissim=0.75, max_gen_samples=None, sample_batch=20):
+def ot_map(cpu_features: torch.tensor, ot_model_path, gen_feature_path, ot_opt: dict, thresh=0.7, topk=20, dissim=0.75, max_gen_samples=100, sample_batch=20, **kwargs):
     points_num = cpu_features.shape[0]
     dim_y = cpu_features.shape[1]
-    ot = OMTRaw(cpu_features, points_num, dim_y, 0, 0, points_num, model_path=ot_model_path)
+    ot = OMTRaw(cpu_features, points_num, points_num, dim_y, **ot_opt, model_path=ot_model_path)
     ot.set_h(torch.load(ot.h_path()))
-    gen_P(ot, sample_batch, gen_feature_path, thresh=thresh, topk=topk, dissim=dissim, max_gen_samples=max_gen_samples)
+    gen_point_and_ot(ot, sample_batch, gen_feature_path, thresh=thresh, topk=topk, dissim=dissim, max_gen_samples=max_gen_samples)
 
 
-def gen_P(p_s: OMTRaw, num_bat_x, generate_path, thresh:float=-1.0, topk=5, dissim=0.75, max_gen_samples=None):
+def gen_point_and_ot(p_s: OMTRaw, num_bat_x, generate_path, thresh: float, topk: int, dissim: float, max_gen_samples: int, ):
+    print('generate feature [num_bat_x={}, generate_path={}, thresh={}, topk={}]'.format(num_bat_x, generate_path, thresh, topk))
     num_x = p_s.bat_size_x * num_bat_x
     bat_size_x = p_s.bat_size_x
 
     topk_index = -torch.ones([topk, num_x], dtype=torch.long)
-    for ii in range(max(num_bat_x, 1)):
+    for ii in range(num_bat_x):
         p_s.generate_samples(ii)
         p_s.calculate_energy_for_sampled_x()
-        _, point_index = torch.topk(p_s.d_U, topk, dim=0)
+        # uₕ(x).shape = [bat_y, bat_x]： 每一个yi对应的超平面的值
+        # 计算每个sample，对应的前topk大的超平面的索引（即对应的yi的index）
+        _, point_index = torch.topk(p_s.U_h_x, topk, dim=0)
         for k in range(topk):
             topk_index[k, ii * bat_size_x:(ii + 1) * bat_size_x].copy_(point_index[k, 0:bat_size_x])
     # [topk, num_x] 铺平成 [2, (topk - 1) * num_x]
@@ -61,9 +61,10 @@ def gen_P(p_s: OMTRaw, num_bat_x, generate_path, thresh:float=-1.0, topk=5, diss
     # less the dot product, larger the angle
     cs = torch.min(torch.ones([cs.shape[0]]), cs)
     theta = torch.acos(cs)
+    print('OT theta {}'.format(theta))
     # pdb.set_trace()
 
-    '''filter out generated samples with theta larger than threshold'''
+    '''filter out generated samples with theta larger than threshold angle'''
     gen_index = topk_index[:, theta <= thresh]
     gen_index, _ = torch.sort(gen_index, dim=0)
     # _, uni_gen_id = np.unique(gen_index.numpy(), return_index=True, axis=1)
@@ -77,6 +78,7 @@ def gen_P(p_s: OMTRaw, num_bat_x, generate_path, thresh:float=-1.0, topk=5, diss
         num_gen = min(num_gen, max_gen_samples)
     gen_index = gen_index[:, :num_gen]
     print('OT successfully generated {} samples'.format(num_gen))
+    print('OT gen_index {}'.format(gen_index))
 
     '''generate new features'''
     # rand_w = torch.rand([num_gen,1])
@@ -84,9 +86,9 @@ def gen_P(p_s: OMTRaw, num_bat_x, generate_path, thresh:float=-1.0, topk=5, diss
     # 加权平均
     gen_feature = (torch.mul(y_features[gen_index[0, :], :], 1 - rand_w) + torch.mul(y_features[gen_index[1, :], :], rand_w)).numpy()
 
-    P_gen2 = y_features[gen_index[0, :], :]
     # include directly mapped feature
-    gen_feature = np.concatenate((gen_feature, P_gen2))
+    # P_gen2 = y_features[gen_index[0, :], :]
+    # gen_feature = np.concatenate((gen_feature, P_gen2))
 
     id_gen = gen_index[0, :].squeeze().numpy().astype(int)
 
