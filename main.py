@@ -12,36 +12,8 @@ from torchvision import datasets, transforms
 
 import coder
 import ot
-
-
-class PathType(IntEnum):
-    train = 0
-    test = 1
-    model = 2
-    result = 3
-
-
-def path(path_type: PathType, root_dir: str, filename: str = "feature.pt") -> str:
-    if path_type == PathType.train:
-        dir = os.path.join(root_dir, "train")
-        if not os.path.exists(dir):
-            raise Exception("no train data dir")
-        return dir
-    elif path_type == PathType.test:
-        dir = os.path.join(root_dir, "test")
-        if not os.path.exists(dir):
-            raise Exception("no test data dir")
-        return dir
-    elif path_type == PathType.model:
-        dir = os.path.join(root_dir, "model")
-        if not os.path.exists(dir):
-            os.makedirs(dir)
-        return dir
-    elif path_type == PathType.result:
-        dir = os.path.join(root_dir, "result")
-        if not os.path.exists(dir):
-            os.makedirs(dir)
-        return os.path.join(dir, filename)
+from config import PathType
+from config import path
 
 
 def train_coder(dim: int, coder_dir: str, option: list, coder_opt: dict) -> coder.AutoEncoder:
@@ -101,10 +73,9 @@ def train(args: argparse.Namespace):
     ot_opt = ast.literal_eval(args.ot_opt)
     if args.train_ot:
         ot.compute_ot(cpu_features, ot_model_path, ot_opt)
-    else:
+    if args.run_ot:
         ot_feature_path = path(PathType.result, ot_dir)
         ot.ot_map(cpu_features, ot_model_path, ot_feature_path, ot_opt, **ot_opt)
-
     if args.train_transformer:
         train_transformer()
 
@@ -130,7 +101,7 @@ if __name__ == '__main__':
     parser.add_argument("--train-coder", help="whether to train coder", dest='train_coder', type=str, default='train,refine,extract')
     parser.add_argument("--coder-option", help="coder train option", dest='coder_opt', type=str, default="{}")
     parser.add_argument("--train-ot", help="whether to train ot", dest='train_ot', type=bool, default=False)
-    parser.add_argument("--run-ot", help="whether to run ot", dest='run_ot', type=bool, default=False)
+    parser.add_argument("--run-ot", help="whether to run ot to generate ot mapping", dest='run_ot', type=bool, default=False)
     parser.add_argument("--ot-option", help="ot option", dest='ot_opt', type=str, default="{}")
     parser.add_argument("--train-transformer", help="whether to train transformer", dest='train_transformer', type=bool, default=False)
     parser.add_argument("--predict", help="whether to predict", dest='predict', type=bool, default=True)
@@ -141,7 +112,7 @@ if __name__ == '__main__':
     parser.add_argument("--latent-dim", help='', type=int, metavar="", dest="latent_dim", default=2)
     args = parser.parse_args()
 
-    if args.train_coder or args.train_ot or args.train_transformer:
+    if args.train_coder or args.train_ot or args.run_ot or args.train_transformer:
         train(args)
 
     if args.predict:

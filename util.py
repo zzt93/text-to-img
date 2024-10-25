@@ -1,4 +1,5 @@
 import os
+from enum import IntEnum
 from glob import glob
 import numpy as np
 import torch
@@ -90,3 +91,22 @@ def removesuffix(input_string, suffix):
     if suffix and input_string.endswith(suffix):
         return input_string[:-len(suffix)]
     return input_string
+
+
+# Load texts and labels from files
+def load_data(text_file, label_file):
+    with open(text_file, 'r', encoding='utf-8') as f:
+        texts = f.readlines()
+
+    with open(label_file, 'r', encoding='utf-8') as f:
+        labels = [int(line.strip()) for line in f]
+
+    return texts, labels
+
+
+def save_data(filename: str, texts: list, labels):
+    with open(filename, 'w', encoding='utf-8') as file:
+        for line in texts:
+            file.write(line + '\n')
+    print(f"Text has been successfully written to {filename}")
+

@@ -22,7 +22,7 @@ class OMTRaw():
     Adam gradient descent method is used here to perform the optimization, and Monte-Carlo integration method is used to calculate the energy.
     """
 
-    def __init__(self, y_features_cpu, y_nums, bat_size_y, dim, max_iter=390, lr=1e-5, bat_size_x=1000, model_path='.', **kwargs):
+    def __init__(self, y_features_cpu, y_nums, bat_size_y, dim, max_iter=390, lr=1e-5, count_of_x_in_batch=1000, model_path='.', **kwargs):
         """Parameters to compute semi-discrete Optimal Transport (OT)
         Args:
             y_features_cpu: vector (CPU vector) storing locations of target points with float type and of shape (num_points, dim).
@@ -30,8 +30,8 @@ class OMTRaw():
             dim: A positive integer indicating the ambient dimension of OT problem.
             max_iter: A positive integer indicating the maximum steps the gradient descent would iterate.
             lr: A positive float number indicating the step length (i.e. learning rate) of the gradient descent algorithm.
-            bat_size_y: Size of mini-batch of cpu_features that feeds to device (i.e. GPU). Positive integer.
-            bat_size_x: Size of mini-batch of Monte-Carlo samples on device. The total number of MC samples used in each iteration is batch_size_x * num_bat.
+            bat_size_y: Count of y in a batch of cpu_features that feeds to device (i.e. GPU). Positive integer.
+            count_of_x_in_batch: Count of x in a batch of Monte-Carlo samples on device. The total number of MC samples used in each iteration is batch_size_x * num_bat.
         """
         self.model_root_path = model_path
         self.y_features_cpu = y_features_cpu
@@ -40,31 +40,31 @@ class OMTRaw():
         self.max_iter = max_iter
         self.lr = lr
         self.bat_size_y = bat_size_y
-        self.bat_size_x = bat_size_x
+        self.count_of_x_in_batch = count_of_x_in_batch
 
         if y_nums % bat_size_y != 0:
             sys.exit('Error: (num_P) is not a multiple of (bat_size_P)')
 
-        self.num_bat_y = y_nums // bat_size_y
         # !internal variables
         # self.d_G_z = torch.empty(self.bat_size_x * self.dim, dtype=torch.float, device=torch.device('cuda'))
-        self.d_sampled_x = torch.empty((self.bat_size_x, self.dim), dtype=torch.float, device=torch.device('cuda'))
+        self.d_sampled_x = torch.empty((self.count_of_x_in_batch, self.dim), dtype=torch.float, device=torch.device('cuda'))
         # self.d_h: Optimal value of h (the variable to be optimized of the variational Energy).
         self.d_h = torch.zeros(self.y_nums, dtype=torch.float, device=torch.device('cuda'))
         self.d_delta_h = torch.zeros(self.y_nums, dtype=torch.float, device=torch.device('cuda'))
-        self.d_batch_index = torch.empty(self.bat_size_x, dtype=torch.long, device=torch.device('cuda'))
-        self.d_batch_max = torch.empty(self.bat_size_x, dtype=torch.float, device=torch.device('cuda'))
+        self.d_batch_index = torch.empty(self.count_of_x_in_batch, dtype=torch.long, device=torch.device('cuda'))
+        self.d_batch_max = torch.empty(self.count_of_x_in_batch, dtype=torch.float, device=torch.device('cuda'))
 
-        self.d_max_in_0_or_1 = torch.empty(self.bat_size_x, dtype=torch.long, device=torch.device('cuda'))
-        self.d_total_ind = torch.empty(self.bat_size_x, dtype=torch.long, device=torch.device('cuda'))
-        self.d_total_max = torch.empty(self.bat_size_x, dtype=torch.float, device=torch.device('cuda'))
+        self.d_max_in_0_or_1 = torch.empty(self.count_of_x_in_batch, dtype=torch.long, device=torch.device('cuda'))
+        self.d_total_ind = torch.empty(self.count_of_x_in_batch, dtype=torch.long, device=torch.device('cuda'))
+        self.d_total_max = torch.empty(self.count_of_x_in_batch, dtype=torch.float, device=torch.device('cuda'))
         self.d_wi = torch.zeros(self.y_nums, dtype=torch.float, device=torch.device('cuda'))
         self.d_wi_sum = torch.zeros(self.y_nums, dtype=torch.float, device=torch.device('cuda'))
         self.d_adam_m = torch.zeros(self.y_nums, dtype=torch.float, device=torch.device('cuda'))
         self.d_adam_v = torch.zeros(self.y_nums, dtype=torch.float, device=torch.device('cuda'))
 
         # !temp variables
-        self.U_h_x = torch.empty((self.bat_size_y, self.bat_size_x), dtype=torch.float, device=torch.device('cuda'))
+        # uₕ(x)
+        self.U_h_x = torch.empty((self.bat_size_y, self.count_of_x_in_batch), dtype=torch.float, device=torch.device('cuda'))
         self.d_temp_h = torch.empty(self.bat_size_y, dtype=torch.float, device=torch.device('cuda'))
         self.d_temp_targets = torch.empty((self.bat_size_y, self.dim), dtype=torch.float, device=torch.device('cuda'))
 
@@ -81,7 +81,7 @@ class OMTRaw():
         Returns:
             self.d_volP: Generated mini-batch of MC samples on device (i.e. GPU) of shape (self.bat_size_n, dim).
         """
-        self.qrng.draw(self.bat_size_x, out=self.d_sampled_x)
+        self.qrng.draw(self.count_of_x_in_batch, out=self.d_sampled_x)
         self.d_sampled_x.add_(-0.5)
 
     def calculate_energy_for_sampled_x(self):
@@ -107,7 +107,7 @@ class OMTRaw():
             self.d_temp_targets.copy_(temp_targets)
             # matrix multiple: [batch_size_y, dim] @ [batch_size_x, dim].transpose = [batch_size_y, batch_size_x]
             torch.mm(self.d_temp_targets, self.d_sampled_x.t(), out=self.U_h_x)
-            torch.add(self.U_h_x, self.d_temp_h.expand([self.bat_size_x, -1]).t(), out=self.U_h_x)
+            torch.add(self.U_h_x, self.d_temp_h.expand([self.count_of_x_in_batch, -1]).t(), out=self.U_h_x)
 
             '''compute batch max'''
             # This line computes the maximum values and their indices for each X (compare across Y, dimension 0 of self.U_h_x).
@@ -122,7 +122,7 @@ class OMTRaw():
                       out=(self.d_total_max, self.d_max_in_0_or_1))
             # chose between d_total_ind & d_index
             self.d_total_ind = torch.stack((self.d_total_ind, self.d_batch_index))[
-                self.d_max_in_0_or_1, torch.arange(self.bat_size_x)]
+                self.d_max_in_0_or_1, torch.arange(self.count_of_x_in_batch)]
             '''add step'''
             i = i + 1
 
@@ -130,7 +130,7 @@ class OMTRaw():
         # group by Yi, then count
         self.d_wi.copy_(torch.bincount(self.d_total_ind, minlength=self.y_nums))
         # calculate ŵ i(h):每个单元的μ-体积是ŵ i(h)= #{j ∈ J | x_j ∈ W_i(h)}/N
-        self.d_wi.div_(self.bat_size_x)
+        self.d_wi.div_(self.count_of_x_in_batch)
 
     def update_h(self):
         """Calculate the update step based on gradient"""
@@ -146,11 +146,11 @@ class OMTRaw():
         """∇h = ∇h - mean(∇h)"""
         self.d_h -= torch.mean(self.d_h)
 
-    def run_gradient_descent(self, last_step=0, num_bat=1):
+    def run_gradient_descent(self, last_step=0, init_sample_batch=1):
         """Gradient descent method. Update self.d_h to the optimal solution.
         Args:
             last_step: Iteration performed before the calling. Used when resuming the training. Default [0].
-            num_bat: Starting number of mini-batch of Monte-Carlo samples. Value of num_bat will increase during iteration. Default [1].
+            init_sample_batch: initial batch number for Monte-Carlo samples. Value of num_bat will increase during iteration. Default [1].
                      total number of MC samples used in each iteration = self.batch_size_x * num_bat
         Returns:
             self.d_h: Optimal value of h (the variable to be optimized of the variational Energy).
@@ -158,7 +158,7 @@ class OMTRaw():
         curr_best_wi_norm = 1e20
         steps = 0
         count_bad = 0
-        dyn_num_bat = num_bat
+        dyn_sample_batch = init_sample_batch
         h_file_list = []
         m_file_list = []
         v_file_list = []
@@ -166,13 +166,13 @@ class OMTRaw():
         while steps <= self.max_iter:
             self.qrng.reset()
             self.d_wi_sum.fill_(0.)
-            for count in range(dyn_num_bat):
+            for count in range(dyn_sample_batch):
                 self.generate_samples(count)
                 self.calculate_energy_for_sampled_x()
                 torch.add(self.d_wi_sum, self.d_wi, out=self.d_wi_sum)
 
             # calculate avg
-            torch.div(self.d_wi_sum, dyn_num_bat, out=self.d_wi)
+            torch.div(self.d_wi_sum, dyn_sample_batch, out=self.d_wi)
             self.update_h()
 
             # 预期 wi == vi，(vi是离散分布，1/N), 所以预期wi是均匀分布，所以使用?
@@ -186,7 +186,7 @@ class OMTRaw():
             print('train ot [{0}/{1}] max absolute error ratio: {2:.3f}. √Σ(wi-vi)^2 : {3:.6f}'.format(
                 steps, self.max_iter, wi_ratio, wi_diff_error))
 
-            if dyn_num_bat > 1e6:
+            if dyn_sample_batch > 1e6:
                 self.save_state(h_file_list, last_step, m_file_list, steps, v_file_list)
                 return
 
@@ -198,8 +198,8 @@ class OMTRaw():
             else:
                 count_bad += 1
             if count_bad > 30:
-                dyn_num_bat *= 2
-                print('samples has increased to {}'.format(dyn_num_bat * self.bat_size_x))
+                dyn_sample_batch *= 2
+                print('samples has increased to {}'.format(dyn_sample_batch * self.count_of_x_in_batch))
                 count_bad = 0
                 curr_best_wi_norm = 1e20
 
@@ -262,7 +262,10 @@ def load_last_file(path, file_ext):
         return last_f_id, last_f
 
 
-def train_omt(model: OMTRaw, num_bat=1):
+def train_omt(model: OMTRaw, init_sample_batch=1):
+    """
+    train uₕ(x) function, to find the optimal hi
+    """
     last_step = 0
     '''load last trained model parameters and last omt parameters'''
     h_id, h_file = load_last_file(model.model_path('h'), '.pt')
@@ -278,7 +281,7 @@ def train_omt(model: OMTRaw, num_bat=1):
             model.set_adam_v(torch.load(v_file))
 
     '''run gradient descent'''
-    model.run_gradient_descent(last_step=last_step, num_bat=num_bat)
+    model.run_gradient_descent(last_step=last_step, init_sample_batch=init_sample_batch)
 
     '''record result'''
     # np.savetxt(self.model_root_path + '/h_final.csv',p_s.d_h.cpu().numpy(), delimiter=',')
