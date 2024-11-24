@@ -11,7 +11,6 @@ import torch.nn as nn
 import torch
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
-from transformers import GPT2LMHeadModel
 
 import coder
 import ot
@@ -59,23 +58,25 @@ def img_dim(loader: DataLoader):
     return images[0].shape[2]
 
 
-def train_transformer(dir: str, tokenizer_root: str, train_opt: dict, d_model=768, nhead=12, num_layers=12, dim_feedforward=3072, dropout=0.1, **kwargs):
-    print('train transformer [train_opt={}, dir={}]'.format(train_opt, dir))
+def train_transformer(transformer_root: str, tokenizer_root: str, train_opt: dict):
+    tokenizer = get_tokenizer(tokenizer_root)
+    model = get_transformer(transformer_root, len(tokenizer.vocab), train_opt, **train_opt)
+    transformer.train_transformer(model, tokenizer, transformer_root, True, **train_opt)
+
+
+def get_transformer(transformer_root: str, vocab_size, train_opt, d_model=768, nhead=12, num_layers=12, dim_feedforward=3072, dropout=0.1, **kwargs):
+    print('transformer [train_opt={}, transformer_root={}, vocab_size={}]'.format(train_opt, transformer_root, vocab_size))
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    tokenizer = get_tokenizer(tokenizer_root)
-    vocab_size = len(tokenizer.vocab)
-    model = transformer.MyTransformer(vocab_size=vocab_size, d_model=d_model, nhead=nhead, num_layers=num_layers, dim_feedforward=dim_feedforward, dropout=dropout).to(device)
-
+    model = transformer.MyTransformer(vocab_size=vocab_size, d_model=d_model, nhead=nhead, num_layers=num_layers,
+                                      dim_feedforward=dim_feedforward, dropout=dropout).to(device)
     if False:
         num_encoder_layers = num_layers
         num_decoder_layers = num_layers
         max_seq_length = 512
         model = CrossAttentionTransformer(vocab_size, d_model, nhead, num_encoder_layers, num_decoder_layers,
                                           dim_feedforward, max_seq_length, dropout).to(device)
-
-    transformer.train_transformer(model, tokenizer, dir, True, **train_opt)
-    transformer.run_transformer(model, dir, "数字1")
+    return model
 
 
 def get_tokenizer(root_dir):
@@ -116,7 +117,7 @@ def train(args: argparse.Namespace):
     if args.train_transformer:
         transformer_root = args.transformer_dir
         transformer_opt = ast.literal_eval(args.transformer_opt)
-        train_transformer(transformer_root, tokenizer_root, transformer_opt, **transformer_opt)
+        train_transformer(transformer_root, tokenizer_root, transformer_opt)
 
 
 def load_model(model_pattern: str, model_path: str, model: nn.Module) -> None:
@@ -127,12 +128,11 @@ def load_model(model_pattern: str, model_path: str, model: nn.Module) -> None:
             model.load_state_dict(torch.load(os.path.join(model_path, file)))
 
 
-def predict(args: argparse.Namespace, user_input: str):
-
+def predict(model: nn.Module, tokenizer, user_input: str):
     # use transformer to map text to Gaussian latent token
+    transformer.run_transformer(model, tokenizer, user_input)
     # use ot to map Gaussian latent token to real data latent token(filter pattern mixture & )
     # use decoder to map latent token to image
-    pass
 
 
 if __name__ == '__main__':
@@ -167,9 +167,22 @@ if __name__ == '__main__':
         train(args)
 
     if args.predict:
-        print("Enter to generate: ")
-        input_data = sys.stdin.read()
-        lines = input_data.splitlines()
+        tokenizer_root = args.tokenizer_dir
+        transformer_root = args.transformer_dir
+        transformer_opt = ast.literal_eval(args.transformer_opt)
+        tokenizer = get_tokenizer(tokenizer_root)
+        transformer = get_transformer(transformer_root, len(tokenizer.vocab), transformer_opt, **transformer_opt)
+        model_dir = config.directory(config.PathType.model, transformer_root)
+        util.resume_model(transformer, model_dir, 'Epoch_*_transformer_*.pth')
+        transformer.eval()
 
-        for line in lines:
-            print(predict(args, line))
+        while True:
+            user_input = input("Enter a line of text (or type 'exit' to quit): ")
+
+            # Check if the user wants to exit the loop
+            if user_input.lower() == 'exit':
+                print("Exiting the loop.")
+                break
+
+            # Output the input received
+            print(predict(transformer, tokenizer, user_input))

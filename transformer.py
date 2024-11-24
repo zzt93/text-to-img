@@ -195,7 +195,7 @@ class TextDataset(Dataset):
         return input_ids, labels
 
 
-EOF = '<|endoftext|>'
+endoftext = '<|endoftext|>'
 
 def train_tokenizer(t: minbpe.base.Tokenizer, root_dir: str, **kwargs):
     data_path = config.path(config.PathType.train, root_dir, config.transformer_train_data_file)
@@ -210,18 +210,13 @@ def train_tokenizer(t: minbpe.base.Tokenizer, root_dir: str, **kwargs):
                 t.vocab[l] = c.encode("utf-8")
                 m[c.encode("utf-8")] = True
                 l += 1
-    t.register_special_tokens({EOF: l})
+    t.register_special_tokens({endoftext: l})
     t.save(config.path(config.PathType.model, root_dir, config.tokenizer_model_file))
     return t
 
 
-def run_transformer(model: nn.Module, root_dir: str, input: str):
-    model_dir = config.directory(config.PathType.model, root_dir)
-    util.resume_model(model, model_dir, 'Epoch_*_transformer_*.pth')
-    model.eval()
-
-    tokenizer = minbpe.regex.RegexTokenizer()
-    output = model(tokenizer.encode(input))
+def run_transformer(transformer: nn.Module, tokenizer, input: str):
+    output = transformer(torch.tensor(tokenizer.encode(input)))
     print(tokenizer.decode(output))
 
 
@@ -259,7 +254,7 @@ def train_transformer(model: nn.Module, tokenizer: minbpe.base.Tokenizer, root_d
             optimizer.step()
 
             print(f'Loss: {loss.item():.4f}')
-            util.save_model(model, model_dir, 'Epoch_{}__transformer_{:04f}.pth'.format(epoch, loss.item()), 'Epoch_*_transformer_*.pth')
+        util.save_model(model, model_dir, 'Epoch_{}__transformer_{:04f}.pth'.format(epoch, loss.item()), 'Epoch_*_transformer_*.pth')
 
     print("Training complete.")
 
