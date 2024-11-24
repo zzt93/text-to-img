@@ -1,6 +1,8 @@
 import os
 from enum import IntEnum
 
+from transformers import AutoTokenizer
+
 
 class PathType(IntEnum):
     train = 0
@@ -9,13 +11,16 @@ class PathType(IntEnum):
     result = 3
 
 
-def path(path_type: PathType, root_dir: str, filename: str = "feature.pt") -> str:
+def path(path_type: PathType, root_dir: str, filename: str) -> str:
+    dir = directory(path_type, root_dir)
+    return os.path.join(dir, filename)
+
+
+def directory(path_type: PathType, root_dir: str) -> str:
     if path_type == PathType.train:
         dir = os.path.join(root_dir, "train")
         if not os.path.exists(dir):
             raise Exception("no train data dir")
-        if filename:
-            return os.path.join(dir, filename)
         return dir
     elif path_type == PathType.test:
         dir = os.path.join(root_dir, "test")
@@ -31,4 +36,10 @@ def path(path_type: PathType, root_dir: str, filename: str = "feature.pt") -> st
         dir = os.path.join(root_dir, "result")
         if not os.path.exists(dir):
             os.makedirs(dir)
-        return os.path.join(dir, filename)
+        return dir
+
+
+transformer_train_data_file = "num.text"
+tokenizer_model_file = "tokenizer"
+coder_model_file = "feature.pt"
+ot_model_file = "feature.pt"

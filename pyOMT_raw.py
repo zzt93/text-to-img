@@ -81,7 +81,9 @@ class OMTRaw():
         Returns:
             self.d_volP: Generated mini-batch of MC samples on device (i.e. GPU) of shape (self.bat_size_n, dim).
         """
+        # range [0, 1)
         self.qrng.draw(self.count_of_x_in_batch, out=self.d_sampled_x)
+        # range [-0.5, 0.5)
         self.d_sampled_x.add_(-0.5)
 
     def calculate_energy_for_sampled_x(self):

@@ -1,13 +1,28 @@
-import torch.optim as optim
+import math
+from abc import ABCMeta
+from torch.utils.data import DataLoader, Dataset
+from tqdm import tqdm
 import torch
 import torch.nn as nn
 from torch.nn import TransformerEncoder, TransformerEncoderLayer, TransformerDecoder, TransformerDecoderLayer
-
-# Ensure consistent results
-torch.manual_seed(42)
+from torch.nn.utils.rnn import pad_sequence
 
 
-class CrossAttentionTransformer(nn.Module):
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import config
+import minbpe.base
+import minbpe.regex
+import util
+from util import load_texts
+
+
+class AbsTransformer(nn.Module, metaclass=ABCMeta):
+    pass
+
+
+class CrossAttentionTransformer(AbsTransformer):
     def __init__(self, vocab_size, d_model=512, nhead=8, num_encoder_layers=6, num_decoder_layers=6,
                  dim_feedforward=2048, max_seq_length=512, dropout=0.1):
         """
@@ -97,58 +112,192 @@ class CrossAttentionTransformer(nn.Module):
         return output
 
 
-def get_vocab_size():
-    return 100
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=5000):
+        super(PositionalEncoding, self).__init__()
+        self.encoding = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len).unsqueeze(1).float()
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * -(torch.log(torch.tensor(10000.0)) / d_model))
+        self.encoding[:, 0::2] = torch.sin(position * div_term)
+        self.encoding[:, 1::2] = torch.cos(position * div_term)
+        self.encoding = self.encoding.unsqueeze(0)
+
+    def forward(self, x):
+        return x + self.encoding[:, :x.size(1)].to(x.device)
 
 
-if __name__ == '__main__':
-    vocab_size = get_vocab_size()
-    d_model = 512
-    nhead = 8
-    num_encoder_layers = 6
-    num_decoder_layers = 6
-    dim_feedforward = 2048
-    max_seq_length = 512
-    dropout = 0.1
+class MyTransformerDecoderLayer(nn.Module):
+    def __init__(self, d_model, nhead, dim_feedforward, dropout):
+        super(MyTransformerDecoderLayer, self).__init__()
+        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
+        self.linear1 = nn.Linear(d_model, dim_feedforward)
+        self.dropout = nn.Dropout(dropout)
+        self.linear2 = nn.Linear(dim_feedforward, d_model)
 
-    model = CrossAttentionTransformer(vocab_size, d_model, nhead, num_encoder_layers, num_decoder_layers,
-                                      dim_feedforward, max_seq_length, dropout)
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
 
-    batch_size = 32
-    src_seq_length = 50
-    tgt_seq_length = 50
+    def forward(self, src, src_key_padding_mask=None):
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        causal_mask = nn.Transformer.generate_square_subsequent_mask(src.shape[1]).to(device)
+        src2 = self.self_attn(src, src, src, attn_mask=causal_mask, key_padding_mask=src_key_padding_mask, is_causal=True)[0]
+        src = src + self.dropout1(src2)
+        src = self.norm1(src)
+        src2 = self.linear2(self.dropout(F.relu(self.linear1(src))))
+        src = src + self.dropout2(src2)
+        src = self.norm2(src)
+        return src
 
-    # Generate random token indices for source and target sequences
-    src_input = torch.randint(0, vocab_size, (src_seq_length, batch_size))
-    tgt_input = torch.randint(0, vocab_size, (tgt_seq_length, batch_size))
-    tgt_output = torch.randint(0, vocab_size, (tgt_seq_length, batch_size))
 
-    # Define the loss function and the optimizer
+class MyTransformer(AbsTransformer):
+    def __init__(self, vocab_size, d_model, nhead, num_layers, dim_feedforward, dropout):
+        super(MyTransformer, self).__init__()
+        self.embedding = nn.Embedding(vocab_size, d_model)
+        self.pos_encoder = PositionalEncoding(d_model)
+        self.layers = nn.ModuleList([MyTransformerDecoderLayer(d_model, nhead, dim_feedforward, dropout)
+                                     for _ in range(num_layers)])
+        self.decoder = nn.Linear(d_model, vocab_size)
+        self.d_model = d_model
+
+    def forward(self, input_ids, src_key_padding_mask=None):
+        # 对嵌入向量进行缩放，使得其范数与位置编码（positional encoding）的范数相当。这种缩放帮助稳定训练过程。
+        input_ids = self.embedding(input_ids) * math.sqrt(self.d_model)
+        input_ids = self.pos_encoder(input_ids)
+        for layer in self.layers:
+            input_ids = layer(input_ids, src_key_padding_mask=src_key_padding_mask)
+        return self.decoder(input_ids)
+
+
+class TextDataset(Dataset):
+    def __init__(self, text_list, tokenizer, block_size=128):
+        self.examples = []
+
+        for text in text_list:
+            text = text + "EOF"
+            # Tokenize the text and convert it into token IDs
+            tokenized_text = tokenizer.encode(text)
+
+            # Split the tokenized text into blocks of size `block_size`
+            for i in range(0, len(tokenized_text) - block_size + 1, block_size):
+                block = tokenized_text[i:i + block_size]
+                self.examples.append(block)
+
+    def __len__(self):
+        return len(self.examples)
+
+    def __getitem__(self, idx):
+        # Get the block and convert it to a tensor
+        block = self.examples[idx]
+        input_ids = torch.tensor(block[:-1], dtype=torch.long)  # All but the last token
+        labels = torch.tensor(block[1:], dtype=torch.long)  # All but the first token
+        return input_ids, labels
+
+
+EOF = '<|endoftext|>'
+
+def train_tokenizer(t: minbpe.base.Tokenizer, root_dir: str, **kwargs):
+    data_path = config.path(config.PathType.train, root_dir, config.transformer_train_data_file)
+    texts = load_texts(data_path)
+    l = len(t.vocab)
+    m = {}
+    for k, v in t.vocab.items():
+        m[v] = True
+    for line in texts:
+        for c in line:
+            if c.encode("utf-8") not in m:
+                t.vocab[l] = c.encode("utf-8")
+                m[c.encode("utf-8")] = True
+                l += 1
+    t.register_special_tokens({EOF: l})
+    t.save(config.path(config.PathType.model, root_dir, config.tokenizer_model_file))
+    return t
+
+
+def run_transformer(model: nn.Module, root_dir: str, input: str):
+    model_dir = config.directory(config.PathType.model, root_dir)
+    util.resume_model(model, model_dir, 'Epoch_*_transformer_*.pth')
+    model.eval()
+
+    tokenizer = minbpe.regex.RegexTokenizer()
+    output = model(tokenizer.encode(input))
+    print(tokenizer.decode(output))
+
+
+def train_transformer(model: nn.Module, tokenizer: minbpe.base.Tokenizer, root_dir: str, resume: bool, epochs: int = 10, lr: float = 5e-5, batch_size: int = 2, **kwargs):
+    data_path = config.path(config.PathType.train, root_dir, config.transformer_train_data_file)
+    model_dir = config.directory(config.PathType.model, root_dir)
+
+    model.train()
+
+    if resume:
+        util.resume_model(model, model_dir, 'Epoch_*_transformer_*.pth')
+
+    texts = load_texts(data_path)
+    vocab_size = len(tokenizer.vocab)
+    dataset = TextDataset(texts, tokenizer)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+    # Optimizer
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    num_epochs = 10  # Number of epochs to train over
+    # Training loop
+    for epoch in range(epochs):
+        for inputs, labels in tqdm(dataloader, desc=f"Training Epoch {epoch + 1}"):
+            inputs, labels = inputs.to(device), labels.to(device)
 
-    model.train()  # Set the model to training mode
-    for epoch in range(num_epochs):
-        optimizer.zero_grad()  # Clear gradients
+            # Forward pass
+            outputs = model(input_ids=inputs)
+            loss = criterion(outputs.view(-1, vocab_size), labels.view(-1))
 
-        # Forward pass
-        output = model(src_input, tgt_input)
+            # Backward pass and optimization
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-        # Output shape will be [tgt_seq_length, batch_size, vocab_size]
-        # Reshape to calculate loss
-        output = output.view(-1, vocab_size)
-        tgt_output = tgt_output.view(-1)
+            print(f'Loss: {loss.item():.4f}')
+            util.save_model(model, model_dir, 'Epoch_{}__transformer_{:04f}.pth'.format(epoch, loss.item()), 'Epoch_*_transformer_*.pth')
 
-        # Compute loss
-        loss = criterion(output, tgt_output)
+    print("Training complete.")
 
-        # Backward pass
-        loss.backward()  # Compute gradients
-
-        # Update weights
-        optimizer.step()
-
-        # Print progress
-        print(f'Epoch [{epoch + 1}/{num_epochs}], Loss: {loss.item():.4f}')
+    # batch_size = 32
+    # src_seq_length = 50
+    # tgt_seq_length = 50
+    #
+    # # Generate random token indices for source and target sequences
+    # src_input = torch.randint(0, vocab_size, (src_seq_length, batch_size))
+    # tgt_input = torch.randint(0, vocab_size, (tgt_seq_length, batch_size))
+    # tgt_output = torch.randint(0, vocab_size, (tgt_seq_length, batch_size))
+    #
+    # # Define the loss function and the optimizer
+    # criterion = nn.CrossEntropyLoss()
+    # optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    #
+    # num_epochs = 10  # Number of epochs to train over
+    #
+    # model.train()  # Set the model to training mode
+    # for epoch in range(num_epochs):
+    #     optimizer.zero_grad()  # Clear gradients
+    #
+    #     # Forward pass
+    #     output = model(src_input, tgt_input)
+    #
+    #     # Output shape will be [tgt_seq_length, batch_size, vocab_size]
+    #     # Reshape to calculate loss
+    #     output = output.view(-1, vocab_size)
+    #     tgt_output = tgt_output.view(-1)
+    #
+    #     # Compute loss
+    #     loss = criterion(output, tgt_output)
+    #
+    #     # Backward pass
+    #     loss.backward()  # Compute gradients
+    #
+    #     # Update weights
+    #     optimizer.step()
+    #
+    #     # Print progress
+    #     print(f'Epoch [{epoch + 1}/{num_epochs}], Loss: {loss.item():.4f}')

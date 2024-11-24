@@ -140,9 +140,9 @@ def generate_transformer_data(y_index, x_index, x_feature):
     for i in range(min(num_gen, len(x_index))):
         # 详见 @reshape
         x = x_index[i] % x_num
-        res.append(fmt % (labels[top0[i]], top0[i], x_feature[x]))
+        res.append(fmt % (labels[top0[i]], top0[i].item(), x_feature[x].numpy().tolist()))
     # print(res)
-    p = config.path(config.PathType.train, "./transformer", "num.text")
+    p = config.path(config.PathType.train, "./transformer", config.transformer_train_data_file)
     util.save_data(p, res, "")
 
 

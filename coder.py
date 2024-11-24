@@ -1,4 +1,3 @@
-import fnmatch
 import os
 from abc import ABCMeta, abstractmethod
 
@@ -14,9 +13,8 @@ from torch.utils.data import DataLoader
 import P_loader
 import numpy as np  # linear algebra
 import matplotlib.pyplot as plt
-from glob import glob
 
-import util
+from util import resume_model, save_model
 
 _28 = 28
 
@@ -377,16 +375,6 @@ def refine(model: AutoEncoder, dataloader: DataLoader, testloader: DataLoader, m
                    'Epoch_{}_sim_autoencoder_refine_{:04f}_{:04f}.pth'.format(epoch, loss_train, loss_test))
 
 
-def save_model(model, model_dir: str, name: str):
-    torch.save(model.state_dict(), os.path.join(model_dir, name))
-    m = file_loss(model_dir)
-    i = 0
-    for file, loss in m.items():
-        i += 1
-        if i > 100:
-            os.remove(file)
-
-
 def train(model: AutoEncoder, dataloader: DataLoader, testloader: DataLoader, model_path: str,
           loss_weight: float = 1e-6,
           num_epochs: int = 100, resume: bool = True, learning_rate: float = 2e-3, **kwargs):
@@ -457,27 +445,6 @@ def train(model: AutoEncoder, dataloader: DataLoader, testloader: DataLoader, mo
         #                                                                                  loss_test)))
 
         save_model(model, model_path, 'Epoch_{}_sim_autoencoder_{:04f}_{:04f}.pth'.format(epoch, loss_train, loss_test))
-
-
-def resume_model(model: AutoEncoder, model_dir: str):
-    m = file_loss(model_dir)
-
-    for file, loss in m.items():
-        print('resume model using {}'.format(file))
-        model.load_state_dict(torch.load(file))
-        return
-
-
-def file_loss(model_dir):
-    m = {}
-    for file in glob(os.path.join(model_dir, '*')):
-        filename = os.path.basename(file)
-        if fnmatch.fnmatch(filename, 'Epoch_*_sim_autoencoder*.pth'):
-            split = util.removesuffix(filename, ".pth").split("_")
-            test_loss = float(split[-1])
-            train_loss = float(split[-2])
-            m[file] = train_loss + test_loss
-    return dict(sorted(m.items(), key=lambda item: item[1]))
 
 
 def extract_features(model: AutoEncoder, dataset: P_loader, feature_save_path: str, batch_size: int = 512, **kwargs):

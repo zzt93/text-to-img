@@ -1,3 +1,4 @@
+import fnmatch
 import os
 from enum import IntEnum
 from glob import glob
@@ -5,6 +6,7 @@ import numpy as np
 import torch
 
 import matplotlib.pyplot as plt
+from torch import nn as nn
 
 
 def save_labels():
@@ -110,3 +112,52 @@ def save_data(filename: str, texts: list, labels):
             file.write(line + '\n')
     print(f"Text has been successfully written to {filename}")
 
+
+def resume_model(model: nn.Module, model_dir: str, file_pattern: str='Epoch_*_sim_autoencoder*.pth'):
+    m = file_loss(model_dir, file_pattern)
+
+    for file, loss in m.items():
+        print('resume model using {}'.format(file))
+        model.load_state_dict(torch.load(file))
+        return
+    print('no model, start from scratch')
+
+
+def file_loss(model_dir: str, file_pattern: str):
+    m = {}
+    for file in glob(os.path.join(model_dir, '*')):
+        filename = os.path.basename(file)
+        if fnmatch.fnmatch(filename, file_pattern):
+            split = removesuffix(filename, ".pth").split("_")
+            test_loss = float(split[-1])
+            if is_float_string(split[-2]):
+                train_loss = float(split[-2])
+            else:
+                train_loss = 0
+            m[file] = train_loss + test_loss
+    return dict(sorted(m.items(), key=lambda item: item[1]))
+
+
+def is_float_string(value):
+    if '.' not in value:
+        return False
+    try:
+        float(value)
+        return True
+    except ValueError:
+        return False
+
+def load_texts(text_file):
+    with open(text_file, 'r', encoding='utf-8') as f:
+        texts = f.readlines()
+    return texts
+
+
+def save_model(model, model_dir: str, name: str, loss_pattern: str='Epoch_*_sim_autoencoder*.pth'):
+    torch.save(model.state_dict(), os.path.join(model_dir, name))
+    m = file_loss(model_dir, loss_pattern)
+    i = 0
+    for file, loss in m.items():
+        i += 1
+        if i > 10:
+            os.remove(file)
