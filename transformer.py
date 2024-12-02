@@ -171,18 +171,20 @@ class MyTransformer(AbsTransformer):
 
 
 class TextDataset(Dataset):
-    def __init__(self, text_list, tokenizer, block_size=128):
+    def __init__(self, text_list, tokenizer, block_size=256):
         self.examples = []
 
+        all = ''
         for text in text_list:
-            text = text + "EOF"
-            # Tokenize the text and convert it into token IDs
-            tokenized_text = tokenizer.encode(text)
+            all += text + endoftext
 
-            # Split the tokenized text into blocks of size `block_size`
-            for i in range(0, len(tokenized_text) - block_size + 1, block_size):
-                block = tokenized_text[i:i + block_size]
-                self.examples.append(block)
+        # Tokenize the text and convert it into token IDs
+        tokenized_text = tokenizer.encode(all)
+
+        # Split the tokenized text into blocks of size `block_size`
+        for i in range(0, len(tokenized_text) - block_size + 1, block_size):
+            block = tokenized_text[i:i + block_size]
+            self.examples.append(block)
 
     def __len__(self):
         return len(self.examples)
@@ -215,9 +217,17 @@ def train_tokenizer(t: minbpe.base.Tokenizer, root_dir: str, **kwargs):
     return t
 
 
-def run_transformer(transformer: nn.Module, tokenizer, input: str):
-    output = transformer(torch.tensor(tokenizer.encode(input)))
-    print(tokenizer.decode(output))
+def run_transformer(transformer: nn.Module, tokenizer: minbpe.base.Tokenizer, input: str):
+    max_index = 0
+    while max_index != tokenizer.special_tokens[endoftext]:
+        # .unsqueeze(0) add a batch dimension
+        output = transformer(torch.tensor(tokenizer.encode(input)).unsqueeze(0))
+        # last token logits
+        probabilities = F.softmax(output[0][-1], dim=0)
+        max_index = torch.argmax(probabilities)
+        next = tokenizer.decode([max_index.item()])
+        print(next, end='')
+        input += next
 
 
 def train_transformer(model: nn.Module, tokenizer: minbpe.base.Tokenizer, root_dir: str, resume: bool, epochs: int = 10, lr: float = 5e-5, batch_size: int = 2, **kwargs):

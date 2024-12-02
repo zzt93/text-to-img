@@ -2,7 +2,6 @@ import argparse
 import ast
 import fnmatch
 import os
-import sys
 
 import config
 import minbpe.regex
@@ -171,10 +170,10 @@ if __name__ == '__main__':
         transformer_root = args.transformer_dir
         transformer_opt = ast.literal_eval(args.transformer_opt)
         tokenizer = get_tokenizer(tokenizer_root)
-        transformer = get_transformer(transformer_root, len(tokenizer.vocab), transformer_opt, **transformer_opt)
+        my_transformer = get_transformer(transformer_root, len(tokenizer.vocab), transformer_opt, **transformer_opt)
         model_dir = config.directory(config.PathType.model, transformer_root)
-        util.resume_model(transformer, model_dir, 'Epoch_*_transformer_*.pth')
-        transformer.eval()
+        util.resume_model(my_transformer, model_dir, 'Epoch_*_transformer_*.pth')
+        my_transformer.eval()
 
         while True:
             user_input = input("Enter a line of text (or type 'exit' to quit): ")
@@ -185,4 +184,4 @@ if __name__ == '__main__':
                 break
 
             # Output the input received
-            print(predict(transformer, tokenizer, user_input))
+            print(predict(my_transformer, tokenizer, user_input))
