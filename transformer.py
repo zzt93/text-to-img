@@ -171,15 +171,19 @@ class MyTransformer(AbsTransformer):
 
 
 class TextDataset(Dataset):
-    def __init__(self, text_list, tokenizer, block_size=256):
+    def __init__(self, text_list: list, tokenizer, block_size=256):
         self.examples = []
 
-        all = ''
+        all_text = ''
         for text in text_list:
-            all += text + endoftext
+            text = text.strip()
+            # 数字5(19022) [-0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5]
+            all_text += text + endoftext
+            start, end = text.index('('), text.index(')')
+            all_text += ("The coordinates of the %s-th %s are %s" % (text[start + 1:end], text[0:start], text[end + 1 + 1:])) + endoftext
 
         # Tokenize the text and convert it into token IDs
-        tokenized_text = tokenizer.encode(all)
+        tokenized_text = tokenizer.encode(all_text)
 
         # Split the tokenized text into blocks of size `block_size`
         for i in range(0, len(tokenized_text) - block_size + 1, block_size):
@@ -225,6 +229,8 @@ def run_transformer(transformer: nn.Module, tokenizer: minbpe.base.Tokenizer, in
         # last token logits
         probabilities = F.softmax(output[0][-1], dim=0)
         max_index = torch.argmax(probabilities)
+        if max_index == tokenizer.special_tokens[endoftext]:
+            return input
         next = tokenizer.decode([max_index.item()])
         print(next, end='')
         input += next

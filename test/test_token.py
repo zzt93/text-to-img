@@ -1,4 +1,15 @@
 
+text_list = ["数字5(19022) [-0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5]", "数字1(8891) [0.25, -0.25, -0.25, -0.25, 0.25, 0.25, -0.25, 0.25, 0.25, 0.25, 0.25, 0.25, -0.25, -0.25, 0.25, -0.25, 0.25, -0.25]"]
+endoftext = 'endoftext'
+all_text = ''
+for text in text_list:
+    text = text.strip()
+    # 数字5(19022) [-0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5]
+    all_text += text + endoftext
+    start, end = text.index('('), text.index(')')
+    all_text += ("The coordinates of the %s-th %s are %s" % (text[start + 1:end], text[0:start], text[end + 1 + 1:])) + endoftext
+
+
 import minbpe.regex
 import torch
 from torch.nn.utils.rnn import pad_sequence

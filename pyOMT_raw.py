@@ -22,7 +22,7 @@ class OMTRaw():
     Adam gradient descent method is used here to perform the optimization, and Monte-Carlo integration method is used to calculate the energy.
     """
 
-    def __init__(self, y_features_cpu, y_nums, bat_size_y, dim, max_iter=390, lr=1e-5, count_of_x_in_batch=1000, model_path='.', **kwargs):
+    def __init__(self, y_features_cpu, y_nums, bat_size_y, dim, max_iter=390, lr=1e-5, count_of_x_in_batch=1000, model_dir='.', **kwargs):
         """Parameters to compute semi-discrete Optimal Transport (OT)
         Args:
             y_features_cpu: vector (CPU vector) storing locations of target points with float type and of shape (num_points, dim).
@@ -33,7 +33,7 @@ class OMTRaw():
             bat_size_y: Count of y in a batch of cpu_features that feeds to device (i.e. GPU). Positive integer.
             count_of_x_in_batch: Count of x in a batch of Monte-Carlo samples on device. The total number of MC samples used in each iteration is batch_size_x * num_bat.
         """
-        self.model_root_path = model_path
+        self.model_root_path = model_dir
         self.y_features_cpu = y_features_cpu
         self.y_nums = y_nums
         self.dim = dim
@@ -45,34 +45,37 @@ class OMTRaw():
         if y_nums % bat_size_y != 0:
             sys.exit('Error: (num_P) is not a multiple of (bat_size_P)')
 
-        # !internal variables
-        # self.d_G_z = torch.empty(self.bat_size_x * self.dim, dtype=torch.float, device=torch.device('cuda'))
-        self.d_sampled_x = torch.empty((self.count_of_x_in_batch, self.dim), dtype=torch.float, device=torch.device('cuda'))
-        # self.d_h: Optimal value of h (the variable to be optimized of the variational Energy).
-        self.d_h = torch.zeros(self.y_nums, dtype=torch.float, device=torch.device('cuda'))
-        self.d_delta_h = torch.zeros(self.y_nums, dtype=torch.float, device=torch.device('cuda'))
-        self.d_batch_index = torch.empty(self.count_of_x_in_batch, dtype=torch.long, device=torch.device('cuda'))
-        self.d_batch_max = torch.empty(self.count_of_x_in_batch, dtype=torch.float, device=torch.device('cuda'))
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-        self.d_max_in_0_or_1 = torch.empty(self.count_of_x_in_batch, dtype=torch.long, device=torch.device('cuda'))
-        self.d_total_ind = torch.empty(self.count_of_x_in_batch, dtype=torch.long, device=torch.device('cuda'))
-        self.d_total_max = torch.empty(self.count_of_x_in_batch, dtype=torch.float, device=torch.device('cuda'))
-        self.d_wi = torch.zeros(self.y_nums, dtype=torch.float, device=torch.device('cuda'))
-        self.d_wi_sum = torch.zeros(self.y_nums, dtype=torch.float, device=torch.device('cuda'))
-        self.d_adam_m = torch.zeros(self.y_nums, dtype=torch.float, device=torch.device('cuda'))
-        self.d_adam_v = torch.zeros(self.y_nums, dtype=torch.float, device=torch.device('cuda'))
+        # !internal variables
+        # self.d_G_z = torch.empty(self.bat_size_x * self.dim, dtype=torch.float, device=device)
+        self.d_sampled_x = torch.empty((self.count_of_x_in_batch, self.dim), dtype=torch.float, device=device)
+        # self.d_h: Optimal value of h (the variable to be optimized of the variational Energy).
+        self.d_h = torch.zeros(self.y_nums, dtype=torch.float, device=device)
+        self.d_delta_h = torch.zeros(self.y_nums, dtype=torch.float, device=device)
+        self.d_batch_index = torch.empty(self.count_of_x_in_batch, dtype=torch.long, device=device)
+        self.d_batch_max = torch.empty(self.count_of_x_in_batch, dtype=torch.float, device=device)
+
+        self.d_max_in_0_or_1 = torch.empty(self.count_of_x_in_batch, dtype=torch.long, device=device)
+        self.d_total_ind = torch.empty(self.count_of_x_in_batch, dtype=torch.long, device=device)
+        self.d_total_max = torch.empty(self.count_of_x_in_batch, dtype=torch.float, device=device)
+        self.d_wi = torch.zeros(self.y_nums, dtype=torch.float, device=device)
+        self.d_wi_sum = torch.zeros(self.y_nums, dtype=torch.float, device=device)
+        self.d_adam_m = torch.zeros(self.y_nums, dtype=torch.float, device=device)
+        self.d_adam_v = torch.zeros(self.y_nums, dtype=torch.float, device=device)
 
         # !temp variables
         # uₕ(x)
-        self.U_h_x = torch.empty((self.bat_size_y, self.count_of_x_in_batch), dtype=torch.float, device=torch.device('cuda'))
-        self.d_temp_h = torch.empty(self.bat_size_y, dtype=torch.float, device=torch.device('cuda'))
-        self.d_temp_targets = torch.empty((self.bat_size_y, self.dim), dtype=torch.float, device=torch.device('cuda'))
+        self.U_h_x = torch.empty((self.bat_size_y, self.count_of_x_in_batch), dtype=torch.float, device=device)
+        self.d_temp_h = torch.empty(self.bat_size_y, dtype=torch.float, device=device)
+        self.d_temp_targets = torch.empty((self.bat_size_y, self.dim), dtype=torch.float, device=device)
 
         # !random number generator
         self.qrng = torch.quasirandom.SobolEngine(dimension=self.dim)
 
-        print('Allocated GPU memory: {}MB'.format(torch.cuda.memory_allocated() / 1e6))
-        print('Cached memory: {}MB'.format(torch.cuda.memory_cached() / 1e6))
+        if torch.cuda.is_available():
+            print('Allocated GPU memory: {}MB'.format(torch.cuda.memory_allocated() / 1e6))
+            print('Cached memory: {}MB'.format(torch.cuda.memory_cached() / 1e6))
 
     def generate_samples(self, count):
         """Monte-Carlo sample generator.

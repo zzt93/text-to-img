@@ -7,7 +7,7 @@ import torch
 import scipy.io as sio
 
 
-def compute_ot(cpu_features: torch.tensor, ot_model_path, ot_opt: dict):
+def compute_ot(cpu_features: torch.tensor, ot_model_dir, ot_opt: dict):
     print('compute_ot [ot_opt={}]'.format(ot_opt))
     points_num = cpu_features.shape[0]
     dim_y = cpu_features.shape[1]
@@ -17,22 +17,26 @@ def compute_ot(cpu_features: torch.tensor, ot_model_path, ot_opt: dict):
     cpu_features = cpu_features[0 : points_num//bat_size_device*bat_size_device, :]
     points_num = cpu_features.shape[0]
 
-    ot = OMTRaw(cpu_features, points_num, bat_size_device, dim_y, **ot_opt, model_path=ot_model_path)
+    ot = OMTRaw(cpu_features, points_num, bat_size_device, dim_y, **ot_opt, model_dir=ot_model_dir)
 
     init_sample_batch = 20
     train_omt(ot, init_sample_batch)
     torch.save(ot.d_h, ot.h_path())
 
 
-def ot_map(cpu_features: torch.tensor, ot_model_path, gen_feature_path, ot_opt: dict, thresh=0.7, topk=20, dissim=0.75, max_gen_samples=100, sample_batch=20, **kwargs):
+def generate_sample_and_ot(cpu_features: torch.tensor, ot_model_dir, gen_feature_path, ot_opt: dict, thresh=0.7, topk=20, dissim=0.75, max_gen_samples=100, sample_batch=20, **kwargs):
     points_num = cpu_features.shape[0]
     dim_y = cpu_features.shape[1]
-    ot = OMTRaw(cpu_features, points_num, points_num, dim_y, **ot_opt, model_path=ot_model_path)
+    ot = OMTRaw(cpu_features, points_num, points_num, dim_y, **ot_opt, model_dir=ot_model_dir)
     ot.set_h(torch.load(ot.h_path()))
     gen_point_and_ot(ot, sample_batch, gen_feature_path, thresh=thresh, topk=topk, dissim=dissim, max_gen_samples=max_gen_samples)
 
 
-def gen_point_and_ot(p_s: OMTRaw, sample_batch, generate_path, thresh: float, topk: int, dissim: float, max_gen_samples: int, ):
+def ot_a_sample(p_s: OMTRaw, sample: torch.Tensor, thresh: float = 0.35, topk: int = 4, dissim: float = 0.75, **kwargs) -> torch.Tensor:
+    return gen_point_and_ot(p_s, 1, '', thresh=thresh, topk=topk, dissim=dissim, max_gen_samples=1, provided_sample=sample)
+
+
+def gen_point_and_ot(p_s: OMTRaw, sample_batch, generate_path, thresh: float, topk: int, dissim: float, max_gen_samples: int, provided_sample: torch.Tensor = None) -> torch.Tensor:
     print('generate feature [sample_batch={}, generate_path={}, thresh={}, topk={}]'.format(sample_batch, generate_path, thresh, topk))
     num_x = p_s.count_of_x_in_batch * sample_batch
     bat_size_x = p_s.count_of_x_in_batch
@@ -40,7 +44,10 @@ def gen_point_and_ot(p_s: OMTRaw, sample_batch, generate_path, thresh: float, to
     topk_index = -torch.ones([topk, num_x], dtype=torch.long)
     samples = torch.empty((num_x, p_s.dim), dtype=torch.float)
     for ii in range(sample_batch):
-        p_s.generate_samples(ii)
+        if provided_sample is None:
+            p_s.generate_samples(ii)
+        else:
+            p_s.d_sampled_x = provided_sample
         samples[ii * bat_size_x:(ii + 1) * bat_size_x, :] = p_s.d_sampled_x
         p_s.calculate_energy_for_sampled_x()
         # uₕ(x).shape = [bat_y, bat_x]： 每一个x带入每个uₕ(x)函数（超平面函数），得到的的值
@@ -48,6 +55,8 @@ def gen_point_and_ot(p_s: OMTRaw, sample_batch, generate_path, thresh: float, to
         _, point_index = torch.topk(p_s.U_h_x, topk, dim=0)
         for k in range(topk):
             topk_index[k, ii * bat_size_x:(ii + 1) * bat_size_x].copy_(point_index[k, 0:bat_size_x])
+
+
     # [topk, num_x] 铺平成 [2, (topk - 1) * num_x]
     # [原来第0行, 原来第0行 ... 原来第0行]
     # [原来第1行, 原来第2行 ... 原来第topk-1行]
@@ -102,7 +111,7 @@ def gen_point_and_ot(p_s: OMTRaw, sample_batch, generate_path, thresh: float, to
             seen_mod_results[mod_result] = True
             unique_indices.append(value.item())
     # [0 1 6 7]
-    print('可以用来生成新样板的sample索引 {} '.format(unique_indices))
+    print('可以用来生成新样本的sample索引 {} '.format(unique_indices))
     gen_index = topk_index[:, unique_indices]
 
     num_gen = gen_index.shape[1]
@@ -116,7 +125,11 @@ def gen_point_and_ot(p_s: OMTRaw, sample_batch, generate_path, thresh: float, to
     # rand_w = torch.rand([num_gen,1])
     rand_w = dissim * torch.ones([num_gen, 1])
     # 加权平均
-    gen_feature = (torch.mul(y_features[gen_index[0, :], :], 1 - rand_w) + torch.mul(y_features[gen_index[1, :], :], rand_w)).numpy()
+    gen_feature = (torch.mul(y_features[gen_index[0, :], :], 1 - rand_w) + torch.mul(y_features[gen_index[1, :], :], rand_w))
+
+    # 映射给定sample，不需要保存，直接返回
+    if provided_sample is not None:
+        return gen_feature
 
     # include directly mapped feature
     # P_gen2 = y_features[gen_index[0, :], :]
@@ -125,7 +138,7 @@ def gen_point_and_ot(p_s: OMTRaw, sample_batch, generate_path, thresh: float, to
 
     id_gen = gen_index[0, :].squeeze().numpy().astype(int)
 
-    sio.savemat(generate_path, {'features': gen_feature, 'ids': id_gen})
+    sio.savemat(generate_path, {'features': gen_feature.numpy(), 'ids': id_gen})
 
 
 def generate_transformer_data(y_index, x_index, x_feature):

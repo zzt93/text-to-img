@@ -43,3 +43,4 @@ transformer_train_data_file = "num.text"
 tokenizer_model_file = "tokenizer"
 coder_model_file = "feature.pt"
 ot_model_file = "feature.pt"
+mnist_img_dim = 28

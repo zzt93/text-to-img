@@ -5,6 +5,7 @@ import os
 
 import config
 import minbpe.regex
+import minbpe.base
 
 import torch.nn as nn
 import torch
@@ -34,11 +35,7 @@ def train_coder(dim: int, coder_dir: str, option: list, coder_opt: dict) -> code
     test_loader = torch.utils.data.DataLoader(dataset=test_dataset, batch_size=batch_size, shuffle=False)
 
     img_dime = img_dim(train_loader)
-    encoder = coder.LinerAutoEncoder(latent_dim=dim, dim_color=1, img_dim=img_dime, dim_f=32, kernel_size=2).cuda()
-    if 'cnn' in option:
-        encoder = coder.CnnAutoEncoder(latent_dim=dim, dim_color=1, img_dim=img_dime, dim_f=32, kernel_size=2).cuda()
-    elif 'cnn-l' in option:
-        encoder = coder.CnnLinearAutoEncoder(latent_dim=dim, dim_color=1, img_dim=img_dime, dim_f=32, kernel_size=2).cuda()
+    encoder = get_encoder(dim, img_dime, option)
 
     if 'train' in option:
         coder.train(encoder, train_loader, test_loader, model_dir, **coder_opt)
@@ -47,6 +44,18 @@ def train_coder(dim: int, coder_dir: str, option: list, coder_opt: dict) -> code
     if 'extract' in option:
         util.resume_model(encoder, model_dir)
         coder.extract_features(encoder, train_dataset, feature_path, **coder_opt)
+    return encoder
+
+
+def get_encoder(dim, img_dime, option: list) -> coder.AutoEncoder:
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    encoder = coder.LinerAutoEncoder(latent_dim=dim, dim_color=1, img_dim=img_dime, dim_f=32, kernel_size=2).to(device)
+    if 'cnn' in option:
+        encoder = coder.CnnAutoEncoder(latent_dim=dim, dim_color=1, img_dim=img_dime, dim_f=32, kernel_size=2).to(device)
+    elif 'cnn-l' in option:
+        encoder = coder.CnnLinearAutoEncoder(latent_dim=dim, dim_color=1, img_dim=img_dime, dim_f=32,
+                                             kernel_size=2).to(device)
     return encoder
 
 
@@ -106,7 +115,7 @@ def train(args: argparse.Namespace):
             ot.compute_ot(cpu_features, ot_model_dir, ot_opt)
         if args.run_ot:
             ot_feature_path = path(PathType.result, ot_dir, config.ot_model_file)
-            ot.ot_map(cpu_features, ot_model_dir, ot_feature_path, ot_opt, **ot_opt)
+            ot.generate_sample_and_ot(cpu_features, ot_model_dir, ot_feature_path, ot_opt, **ot_opt)
 
     tokenizer_root = args.tokenizer_dir
     if args.train_tokenizer:
@@ -127,11 +136,18 @@ def load_model(model_pattern: str, model_path: str, model: nn.Module) -> None:
             model.load_state_dict(torch.load(os.path.join(model_path, file)))
 
 
-def predict(model: nn.Module, tokenizer, user_input: str):
+def predict(transformer_model: nn.Module, tokenizer: minbpe.base.Tokenizer, ot_raw: ot.OMTRaw, encoder: coder.AutoEncoder, user_input: str, ot_opt: dict):
     # use transformer to map text to Gaussian latent token
-    transformer.run_transformer(model, tokenizer, user_input)
+    res = transformer.run_transformer(transformer_model, tokenizer, user_input)
+    # 数字5(19022) [-0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5]
+    start, end = res.index('('), res.index(')')
+    parsed_list = ast.literal_eval( res[end + 1 + 1:])
+    sample_tensor = torch.tensor(parsed_list)
+
     # use ot to map Gaussian latent token to real data latent token(filter pattern mixture & )
+    gen_feature = ot.ot_a_sample(ot_raw, sample=sample_tensor, **ot_opt)
     # use decoder to map latent token to image
+    coder.plot_encoder_features(encoder, [gen_feature], [user_input])
 
 
 if __name__ == '__main__':
@@ -166,15 +182,33 @@ if __name__ == '__main__':
         train(args)
 
     if args.predict:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
         tokenizer_root = args.tokenizer_dir
         transformer_root = args.transformer_dir
         transformer_opt = ast.literal_eval(args.transformer_opt)
         tokenizer = get_tokenizer(tokenizer_root)
         my_transformer = get_transformer(transformer_root, len(tokenizer.vocab), transformer_opt, **transformer_opt)
-        model_dir = config.directory(config.PathType.model, transformer_root)
-        util.resume_model(my_transformer, model_dir, 'Epoch_*_transformer_*.pth')
+        transformer_model_dir = config.directory(config.PathType.model, transformer_root)
+        util.resume_model(my_transformer, transformer_model_dir, 'Epoch_*_transformer_*.pth')
         my_transformer.eval()
 
+        ot_dir = args.ot_dir
+        coder_dir = args.coder_dir
+        ot_model_dir = directory(PathType.model, ot_dir)
+        coder_feature_path = path(PathType.result, coder_dir, config.coder_model_file)
+        cpu_features = torch.load(coder_feature_path, map_location=torch.device(device))
+        ot_opt = ast.literal_eval(args.ot_opt)
+        points_num = cpu_features.shape[0]
+        dim_y = cpu_features.shape[1]
+        ot_raw = ot.OMTRaw(cpu_features, points_num, points_num, dim_y, **ot_opt, model_dir=ot_model_dir, count_of_x_in_batch=1)
+        ot_raw.set_h(torch.load(ot_raw.h_path(), map_location=torch.device(device)))
+
+        encoder = get_encoder(dim_y, config.mnist_img_dim, ['cnn-l'])
+        coder_model_dir = directory(PathType.model, coder_dir)
+        util.resume_model(encoder, coder_model_dir)
+
+        print('predict [ot_opt={}]'.format(ot_opt))
         while True:
             user_input = input("Enter a line of text (or type 'exit' to quit): ")
 
@@ -184,4 +218,4 @@ if __name__ == '__main__':
                 break
 
             # Output the input received
-            print(predict(my_transformer, tokenizer, user_input))
+            predict(my_transformer, tokenizer, ot_raw, encoder, user_input, ot_opt)

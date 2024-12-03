@@ -45,7 +45,7 @@ class AutoEncoder(Module, metaclass=ABCMeta):
         pass
 
     @abstractmethod
-    def from_feature(self, x):
+    def from_feature(self, x: torch.Tensor):
         pass
 
     @abstractmethod
@@ -522,7 +522,7 @@ def decode_features(model: AutoEncoder, gen_im_path: str, feature_save_path: str
     print('Decoding complete. ')
 
 
-def plot_encoder_features(encoder: AutoEncoder, features, labels: list, model_dir: str = './coder/model', img_dim=28,
+def plot_encoder_features(encoder: AutoEncoder, features: list, labels: list, model_dir: str = './coder/model', img_dim=28,
                           print_data=False):
     resume_model(encoder, model_dir)
     for f, l in zip(features, labels):
