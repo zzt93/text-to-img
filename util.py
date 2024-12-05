@@ -118,7 +118,7 @@ def resume_model(model: nn.Module, model_dir: str, file_pattern: str='Epoch_*_si
 
     for file, loss in m.items():
         print('resume model using {}'.format(file))
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
         model.load_state_dict(torch.load(file, map_location=torch.device(device)))
         return
     print('no model in {}, start from scratch', model_dir)

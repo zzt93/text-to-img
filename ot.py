@@ -28,7 +28,8 @@ def generate_sample_and_ot(cpu_features: torch.tensor, ot_model_dir, gen_feature
     points_num = cpu_features.shape[0]
     dim_y = cpu_features.shape[1]
     ot = OMTRaw(cpu_features, points_num, points_num, dim_y, **ot_opt, model_dir=ot_model_dir)
-    ot.set_h(torch.load(ot.h_path()))
+    device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
+    ot.set_h(torch.load(ot.h_path(), map_location=torch.device(device=device)))
     gen_point_and_ot(ot, sample_batch, gen_feature_path, thresh=thresh, topk=topk, dissim=dissim, max_gen_samples=max_gen_samples)
 
 

@@ -45,7 +45,7 @@ class OMTRaw():
         if y_nums % bat_size_y != 0:
             sys.exit('Error: (num_P) is not a multiple of (bat_size_P)')
 
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
 
         # !internal variables
         # self.d_G_z = torch.empty(self.bat_size_x * self.dim, dtype=torch.float, device=device)

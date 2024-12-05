@@ -48,7 +48,7 @@ def train_coder(dim: int, coder_dir: str, option: list, coder_opt: dict) -> code
 
 
 def get_encoder(dim, img_dime, option: list) -> coder.AutoEncoder:
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
 
     encoder = coder.LinerAutoEncoder(latent_dim=dim, dim_color=1, img_dim=img_dime, dim_f=32, kernel_size=2).to(device)
     if 'cnn' in option:
@@ -75,7 +75,7 @@ def train_transformer(transformer_root: str, tokenizer_root: str, train_opt: dic
 def get_transformer(transformer_root: str, vocab_size, train_opt, d_model=768, nhead=12, num_layers=12, dim_feedforward=3072, dropout=0.1, **kwargs):
     print('transformer [train_opt={}, transformer_root={}, vocab_size={}]'.format(train_opt, transformer_root, vocab_size))
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
     model = transformer.MyTransformer(vocab_size=vocab_size, d_model=d_model, nhead=nhead, num_layers=num_layers,
                                       dim_feedforward=dim_feedforward, dropout=dropout).to(device)
     if False:
@@ -182,7 +182,7 @@ if __name__ == '__main__':
         train(args)
 
     if args.predict:
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
 
         tokenizer_root = args.tokenizer_dir
         transformer_root = args.transformer_dir

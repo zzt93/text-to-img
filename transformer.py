@@ -140,7 +140,7 @@ class MyTransformerDecoderLayer(nn.Module):
         self.dropout2 = nn.Dropout(dropout)
 
     def forward(self, src, src_key_padding_mask=None):
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
         causal_mask = nn.Transformer.generate_square_subsequent_mask(src.shape[1]).to(device)
         src2 = self.self_attn(src, src, src, attn_mask=causal_mask, key_padding_mask=src_key_padding_mask, is_causal=True)[0]
         src = src + self.dropout1(src2)
@@ -253,11 +253,19 @@ def train_transformer(model: nn.Module, tokenizer: minbpe.base.Tokenizer, root_d
     # Optimizer
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
 
     # Training loop
     for epoch in range(epochs):
+        count = 0
         for inputs, labels in tqdm(dataloader, desc=f"Training Epoch {epoch + 1}"):
+            if torch.cuda.is_available():
+                print(f"CUDA Memory - Allocated: {torch.cuda.memory_allocated(device) / (1024 ** 2):.2f} MB, "
+                      f"Reserved: {torch.cuda.memory_reserved(device) / (1024 ** 2):.2f} MB")
+            elif torch.backends.mps.is_available():
+                print(f"MPS Memory - Allocated: {torch.mps.current_allocated_memory() / (1024 ** 2):.2f} MB, "
+                      f"Driver : {torch.mps.driver_allocated_memory() / (1024 ** 2):.2f} MB")
+
             inputs, labels = inputs.to(device), labels.to(device)
 
             # Forward pass
@@ -270,6 +278,11 @@ def train_transformer(model: nn.Module, tokenizer: minbpe.base.Tokenizer, root_d
             optimizer.step()
 
             print(f'Loss: {loss.item():.4f}')
+            if count % 1000 == 999:
+                count += 1
+                util.save_model(model, model_dir, 'Epoch_{}__transformer_{:04f}.pth'.format(epoch, loss.item()),
+                                'Epoch_*_transformer_*.pth')
+
         util.save_model(model, model_dir, 'Epoch_{}__transformer_{:04f}.pth'.format(epoch, loss.item()), 'Epoch_*_transformer_*.pth')
 
     print("Training complete.")
