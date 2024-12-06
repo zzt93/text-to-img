@@ -179,8 +179,8 @@ class TextDataset(Dataset):
             text = text.strip()
             # 数字5(19022) [-0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5]
             all_text += text + endoftext
-            start, end = text.index('('), text.index(')')
-            all_text += ("The coordinates of the %s-th %s are %s" % (text[start + 1:end], text[0:start], text[end + 1 + 1:])) + endoftext
+            # start, end = text.index('('), text.index(')')
+            # all_text += ("The coordinates of the %s-th %s are %s" % (text[start + 1:end], text[0:start], text[end + 1 + 1:])) + endoftext
 
         # Tokenize the text and convert it into token IDs
         tokenized_text = tokenizer.encode(all_text)
@@ -222,10 +222,11 @@ def train_tokenizer(t: minbpe.base.Tokenizer, root_dir: str, **kwargs):
 
 
 def run_transformer(transformer: nn.Module, tokenizer: minbpe.base.Tokenizer, input: str):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
     max_index = 0
     while max_index != tokenizer.special_tokens[endoftext]:
         # .unsqueeze(0) add a batch dimension
-        output = transformer(torch.tensor(tokenizer.encode(input)).unsqueeze(0))
+        output = transformer(torch.tensor(tokenizer.encode(input)).unsqueeze(0).to(device))
         # last token logits
         probabilities = F.softmax(output[0][-1], dim=0)
         max_index = torch.argmax(probabilities)
@@ -278,8 +279,8 @@ def train_transformer(model: nn.Module, tokenizer: minbpe.base.Tokenizer, root_d
             optimizer.step()
 
             print(f'Loss: {loss.item():.4f}')
+            count += 1
             if count % 1000 == 999:
-                count += 1
                 util.save_model(model, model_dir, 'Epoch_{}__transformer_{:04f}.pth'.format(epoch, loss.item()),
                                 'Epoch_*_transformer_*.pth')
 
