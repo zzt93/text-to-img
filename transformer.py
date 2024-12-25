@@ -170,25 +170,67 @@ class MyTransformer(AbsTransformer):
         return self.decoder(input_ids)
 
 
+class PaddingTextDataset(Dataset):
+    def __init__(self, text_list: list, tokenizer, block_size=256):
+        self.examples = []
+        self.padding_masks = []
+        self.max_length = 0
+        self.padding_token = 0
+        token_list = []
+        for text in text_list:
+            text = text.strip()
+            # 数字5(19022) [-0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5]
+            tokenized_text = tokenizer.encode(text + endoftext)
+            self.max_length = max(self.max_length, len(tokenized_text))
+            token_list.append(tokenized_text)
+
+        for tokenized_text in token_list:
+            padded_text = tokenized_text + [self.padding_token] * (self.max_length - len(tokenized_text))
+            self.examples.append(padded_text)
+
+            # Create padding mask: 1 for real tokens, 0 for padding tokens
+            padding_mask = [False] * len(tokenized_text) + [True] * (self.max_length - len(tokenized_text))
+            self.padding_masks.append(padding_mask)
+
+    def __len__(self):
+        return len(self.examples)
+
+    def __getitem__(self, idx):
+        # Get the block and convert it to a tensor
+        block = self.examples[idx]
+        input_ids = torch.tensor(block[:-1], dtype=torch.long)  # All but the last token
+        input_mask = torch.tensor(self.padding_masks[idx][:-1])
+        labels = torch.tensor(block[1:], dtype=torch.long)  # All but the first token
+        return input_ids, labels, input_mask
+
+
 class TextDataset(Dataset):
     def __init__(self, text_list: list, tokenizer, block_size=256):
         self.examples = []
 
-        all_text = ''
+        # all_text = ''
+        # for text in text_list:
+        #     text = text.strip()
+        #     # 数字5(19022) [-0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5]
+        #     all_text += text + endoftext
+        #     # start, end = text.index('('), text.index(')')
+        #     # all_text += ("The coordinates of the %s-th %s are %s" % (text[start + 1:end], text[0:start], text[end + 1 + 1:])) + endoftext
+        #
+        # # Tokenize the text and convert it into token IDs
+        # tokenized_text = tokenizer.encode(all_text)
+        #
+        # # Split the tokenized text into blocks of size `block_size`
+        # for i in range(0, len(tokenized_text) - block_size + 1, block_size):
+        #     block = tokenized_text[i:i + block_size]
+        #     self.examples.append(block)
+
         for text in text_list:
             text = text.strip()
             # 数字5(19022) [-0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5]
-            all_text += text + endoftext
-            # start, end = text.index('('), text.index(')')
-            # all_text += ("The coordinates of the %s-th %s are %s" % (text[start + 1:end], text[0:start], text[end + 1 + 1:])) + endoftext
-
-        # Tokenize the text and convert it into token IDs
-        tokenized_text = tokenizer.encode(all_text)
-
-        # Split the tokenized text into blocks of size `block_size`
-        for i in range(0, len(tokenized_text) - block_size + 1, block_size):
-            block = tokenized_text[i:i + block_size]
-            self.examples.append(block)
+            tokenized_text = tokenizer.encode(text + endoftext)
+            for i in range(0, len(tokenized_text) - block_size + 1, block_size):
+                block = tokenized_text[i:i + block_size]
+                self.examples.append(block)
 
     def __len__(self):
         return len(self.examples)
@@ -198,7 +240,7 @@ class TextDataset(Dataset):
         block = self.examples[idx]
         input_ids = torch.tensor(block[:-1], dtype=torch.long)  # All but the last token
         labels = torch.tensor(block[1:], dtype=torch.long)  # All but the first token
-        return input_ids, labels
+        return input_ids, labels, None
 
 
 endoftext = '<|endoftext|>'
@@ -233,7 +275,7 @@ def run_transformer(transformer: nn.Module, tokenizer: minbpe.base.Tokenizer, in
         if max_index == tokenizer.special_tokens[endoftext]:
             return input
         next = tokenizer.decode([max_index.item()])
-        print(next, end='')
+        print(next, end='', flush=True)
         input += next
 
 
@@ -248,7 +290,7 @@ def train_transformer(model: nn.Module, tokenizer: minbpe.base.Tokenizer, root_d
 
     texts = load_texts(data_path)
     vocab_size = len(tokenizer.vocab)
-    dataset = TextDataset(texts, tokenizer)
+    dataset = PaddingTextDataset(texts, tokenizer)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     # Optimizer
@@ -259,7 +301,7 @@ def train_transformer(model: nn.Module, tokenizer: minbpe.base.Tokenizer, root_d
     # Training loop
     for epoch in range(epochs):
         count = 0
-        for inputs, labels in tqdm(dataloader, desc=f"Training Epoch {epoch + 1}"):
+        for inputs, labels, padding in tqdm(dataloader, desc=f"Training Epoch {epoch + 1}"):
             if torch.cuda.is_available():
                 print(f"CUDA Memory - Allocated: {torch.cuda.memory_allocated(device) / (1024 ** 2):.2f} MB, "
                       f"Reserved: {torch.cuda.memory_reserved(device) / (1024 ** 2):.2f} MB")
@@ -267,10 +309,10 @@ def train_transformer(model: nn.Module, tokenizer: minbpe.base.Tokenizer, root_d
                 print(f"MPS Memory - Allocated: {torch.mps.current_allocated_memory() / (1024 ** 2):.2f} MB, "
                       f"Driver : {torch.mps.driver_allocated_memory() / (1024 ** 2):.2f} MB")
 
-            inputs, labels = inputs.to(device), labels.to(device)
+            inputs, labels, padding = inputs.to(device), labels.to(device), padding.to(device)
 
             # Forward pass
-            outputs = model(input_ids=inputs)
+            outputs = model(input_ids=inputs, src_key_padding_mask=padding)
             loss = criterion(outputs.view(-1, vocab_size), labels.view(-1))
 
             # Backward pass and optimization
@@ -281,7 +323,7 @@ def train_transformer(model: nn.Module, tokenizer: minbpe.base.Tokenizer, root_d
             print(f'Loss: {loss.item():.4f}')
             count += 1
             if count % 1000 == 999:
-                util.save_model(model, model_dir, 'Epoch_{}__transformer_{:04f}.pth'.format(epoch, loss.item()),
+                util.save_model(model, model_dir, 'Epoch_{}_mid_transformer_{:04f}.pth'.format(epoch, loss.item()),
                                 'Epoch_*_transformer_*.pth')
 
         util.save_model(model, model_dir, 'Epoch_{}__transformer_{:04f}.pth'.format(epoch, loss.item()), 'Epoch_*_transformer_*.pth')
