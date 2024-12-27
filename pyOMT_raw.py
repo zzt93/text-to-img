@@ -22,10 +22,10 @@ class OMTRaw():
     Adam gradient descent method is used here to perform the optimization, and Monte-Carlo integration method is used to calculate the energy.
     """
 
-    def __init__(self, y_features_cpu, y_nums, bat_size_y, dim, max_iter=390, lr=1e-5, count_of_x_in_batch=1000, model_dir='.', **kwargs):
+    def __init__(self, y_features, y_nums, bat_size_y, dim, max_iter=390, lr=1e-5, count_of_x_in_batch=1000, model_dir='.', **kwargs):
         """Parameters to compute semi-discrete Optimal Transport (OT)
         Args:
-            y_features_cpu: vector (CPU vector) storing locations of target points with float type and of shape (num_points, dim).
+            y_features: vector (CPU vector) storing locations of target points with float type and of shape (num_points, dim).
             y_nums: A positive integer indicating the number of target points (i.e. points the target discrete measure concentrates on).
             dim: A positive integer indicating the ambient dimension of OT problem.
             max_iter: A positive integer indicating the maximum steps the gradient descent would iterate.
@@ -34,7 +34,7 @@ class OMTRaw():
             count_of_x_in_batch: Count of x in a batch of Monte-Carlo samples on device. The total number of MC samples used in each iteration is batch_size_x * num_bat.
         """
         self.model_root_path = model_dir
-        self.y_features_cpu = y_features_cpu
+        self.y_features = y_features
         self.y_nums = y_nums
         self.dim = dim
         self.max_iter = max_iter
@@ -104,7 +104,7 @@ class OMTRaw():
         self.d_total_ind.fill_(-1)
         i = 0
         while i < self.y_nums // self.bat_size_y:
-            temp_targets = self.y_features_cpu[i * self.bat_size_y:(i + 1) * self.bat_size_y]
+            temp_targets = self.y_features[i * self.bat_size_y:(i + 1) * self.bat_size_y]
             temp_targets = temp_targets.view(temp_targets.shape[0], -1)
 
             '''U=Y@X+H'''

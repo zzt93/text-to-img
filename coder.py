@@ -530,7 +530,7 @@ def plot_encoder_features(encoder: AutoEncoder, features: list, labels: list, mo
         y = encoder.decoder(f)
         if print_data:
             print(y)
-        np_array = y.view(-1, img_dim, img_dim).detach().numpy()
+        np_array = y.view(-1, img_dim, img_dim).detach().cpu().numpy()
         # For convert the tensor shape from (channels, height, width) to (height, width, channels)
         np_array = np.transpose(np_array, (1, 2, 0))
         plt.imshow(np.squeeze(np_array), cmap=plt.cm.gray)

@@ -136,13 +136,16 @@ def load_model(model_pattern: str, model_path: str, model: nn.Module) -> None:
             model.load_state_dict(torch.load(os.path.join(model_path, file)))
 
 
-def predict(transformer_model: nn.Module, tokenizer: minbpe.base.Tokenizer, ot_raw: ot.OMTRaw, encoder: coder.AutoEncoder, user_input: str, ot_opt: dict):
+def predict(transformer_model: nn.Module, tokenizer: minbpe.base.Tokenizer, ot_raw: ot.OMTRaw, encoder: coder.AutoEncoder, user_input: str, ot_opt: dict, latent_dim: int) -> None:
     # use transformer to map text to Gaussian latent token
-    res = transformer.run_transformer(transformer_model, tokenizer, user_input)
+    res = transformer.run_transformer(transformer_model, tokenizer, user_input, force_dim=18)
+    # res = '(28888) [0.4000816345214844, 0.4666328430175781, 0.4448738098144531, 0.040279388427734375, -0.08082199096679688, 0.006069183349609375, -0.06620407104492188, 0.4005851745605469, 0.4076805114746094, 0.4003181457519531, 0.4008674621582031, 0.4003181457519531, -0.4044227600097656, 0.3088493347167969, 0.006816864013671875, 0.008815765380859375, 0.040081024169921875, -0.000476837158203125]'
+    # res = '(1888) [0.44408416748046875, 0.44606781005859375, 0.40062713623046875, 0.48871612548828125, -0.04445648193359375, 0.04451751708984375, -0.08884429931640625, 0.46446990966796875, 0.48860931396484375, 0.46608734130859375, 0.40479278564453125, -0.04610443115234375, 0.00878143310546875, 0.44489288330078125, 0.34412384033203125, 0.44487762451171875, 0.04602813720703125, -0.46660614013671875]'
     # 数字5(19022) [-0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5]
     start, end = res.index('('), res.index(')')
-    parsed_list = ast.literal_eval( res[end + 1 + 1:])
-    sample_tensor = torch.tensor(parsed_list)
+    parsed_list = ast.literal_eval(res[end + 1 + 1:])
+    device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
+    sample_tensor = torch.tensor(parsed_list).to(device)
 
     # use ot to map Gaussian latent token to real data latent token(filter pattern mixture & )
     gen_feature = ot.ot_a_sample(ot_raw, sample=sample_tensor, **ot_opt)
@@ -197,11 +200,11 @@ if __name__ == '__main__':
         coder_dir = args.coder_dir
         ot_model_dir = directory(PathType.model, ot_dir)
         coder_feature_path = path(PathType.result, coder_dir, config.coder_model_file)
-        cpu_features = torch.load(coder_feature_path, map_location=torch.device(device))
+        y_features = torch.load(coder_feature_path, map_location=torch.device(device))
         ot_opt = ast.literal_eval(args.ot_opt)
-        points_num = cpu_features.shape[0]
-        dim_y = cpu_features.shape[1]
-        ot_raw = ot.OMTRaw(cpu_features, points_num, points_num, dim_y, **ot_opt, model_dir=ot_model_dir, count_of_x_in_batch=1)
+        points_num = y_features.shape[0]
+        dim_y = y_features.shape[1]
+        ot_raw = ot.OMTRaw(y_features, points_num, points_num, dim_y, **ot_opt, model_dir=ot_model_dir, count_of_x_in_batch=1)
         ot_raw.set_h(torch.load(ot_raw.h_path(), map_location=torch.device(device)))
 
         encoder = get_encoder(dim_y, config.mnist_img_dim, ['cnn-l'])
@@ -218,4 +221,4 @@ if __name__ == '__main__':
                 break
 
             # Output the input received
-            predict(my_transformer, tokenizer, ot_raw, encoder, user_input, ot_opt)
+            predict(my_transformer, tokenizer, ot_raw, encoder, user_input, ot_opt, args.latent_dim)
