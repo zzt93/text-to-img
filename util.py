@@ -1,5 +1,7 @@
 import fnmatch
 import os
+import random
+import re
 from enum import IntEnum
 from glob import glob
 import numpy as np
@@ -162,3 +164,23 @@ def save_model(model, model_dir: str, name: str, loss_pattern: str='Epoch_*_sim_
         i += 1
         if i > 10:
             os.remove(file)
+
+
+pattern = r"\((\d+)\)"
+random.seed(42)
+MAX = 100000
+
+
+def replace_number(user_input):
+    new_number = str(random.randint(1, MAX))
+    match = re.search(pattern, user_input)
+
+    if match:
+        # If a number in parentheses exists, replace it with the new number
+        start, end = match.span()
+        user_input = user_input[:start] + f'({new_number})' + user_input[end:]
+    else:
+        # If no number in parentheses, append the new number in parentheses
+        user_input += f' ({new_number})'
+
+    return user_input

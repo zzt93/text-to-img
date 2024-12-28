@@ -267,6 +267,7 @@ def run_transformer(transformer: nn.Module, tokenizer: minbpe.base.Tokenizer, in
     device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
     max_index = 0
     dim = force_dim
+    print(input, end='', flush=True)
     while max_index != tokenizer.special_tokens[endoftext]:
         # .unsqueeze(0) add a batch dimension
         output = transformer(torch.tensor(tokenizer.encode(input)).unsqueeze(0).to(device))

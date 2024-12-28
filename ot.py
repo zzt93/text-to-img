@@ -100,7 +100,9 @@ def gen_point_and_ot(p_s: OMTRaw, sample_batch, generate_path, thresh: float, to
     # Result: gen_index is:
     # tensor([[ 7, 11,  7,  7,  9],
     #         [ 3,  2,  2,  5,  6]])
-    indices = torch.nonzero(condition).squeeze()
+    indices = torch.nonzero(condition).view(-1)
+    if indices.numel() == 0:
+        return None
     # tensor([0, 1, 4, 6, 7])
 
     seen_mod_results = {}
