@@ -11,3 +11,9 @@ generate number image (MNIST like number) without pattern-confusion and pattern 
 > 数字3
 
 ![](https://github.com/zzt93/text-to-img-model/blob/533f76de508f9763b71664df50814e8583e22c5a/showcase/m_3.png)
+
+# env
+```shell
+pip install torch torchvision tensorboard torch-tb-profiler
+pip install nncf onnx onnxruntime
+```

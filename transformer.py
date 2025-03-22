@@ -139,9 +139,15 @@ class MyTransformerDecoderLayer(nn.Module):
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
 
-    def forward(self, src, src_key_padding_mask=None):
-        device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
-        causal_mask = nn.Transformer.generate_square_subsequent_mask(src.shape[1]).to(device)
+    def forward(self, src, src_key_padding_mask=None, causal_mask=None):
+        dev = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
+        # if torch.backends.mps.is_available():
+        #     # bug of MPS in pytorch 2.3.1, can't direct generate on dev. 2.6.0 is fixed
+        #       causal_mask = nn.Transformer.generate_square_subsequent_mask(src.shape[1]).to(dev)
+        # else:
+        if causal_mask is None:
+            causal_mask = nn.Transformer.generate_square_subsequent_mask(src.shape[1], device=dev)
+        causal_mask = causal_mask[:src.shape[1], :src.shape[1]]
         src2 = self.self_attn(src, src, src, attn_mask=causal_mask, key_padding_mask=src_key_padding_mask, is_causal=True)[0]
         src = src + self.dropout1(src2)
         src = self.norm1(src)
@@ -161,12 +167,12 @@ class MyTransformer(AbsTransformer):
         self.decoder = nn.Linear(d_model, vocab_size)
         self.d_model = d_model
 
-    def forward(self, input_ids, src_key_padding_mask=None):
+    def forward(self, input_ids, src_key_padding_mask=None, causal_mask=None):
         # 对嵌入向量进行缩放，使得其范数与位置编码（positional encoding）的范数相当。这种缩放帮助稳定训练过程。
         input_ids = self.embedding(input_ids) * math.sqrt(self.d_model)
         input_ids = self.pos_encoder(input_ids)
         for layer in self.layers:
-            input_ids = layer(input_ids, src_key_padding_mask=src_key_padding_mask)
+            input_ids = layer(input_ids, src_key_padding_mask=src_key_padding_mask, causal_mask=causal_mask)
         return self.decoder(input_ids)
 
 
@@ -268,9 +274,18 @@ def run_transformer(transformer: nn.Module, tokenizer: minbpe.base.Tokenizer, in
     max_index = 0
     dim = force_dim
     print(input, end='', flush=True)
+
+    causal_mask = nn.Transformer.generate_square_subsequent_mask(500, device=device)
+
     while max_index != tokenizer.special_tokens[endoftext]:
         # .unsqueeze(0) add a batch dimension
-        output = transformer(torch.tensor(tokenizer.encode(input)).unsqueeze(0).to(device))
+        with torch.no_grad():
+            output = transformer(torch.tensor(tokenizer.encode(input)).unsqueeze(0).to(device), causal_mask=causal_mask)
+        # if torch.cuda.is_available():
+        #     with torch.no_grad():
+        #         with autocast():
+        #             output_fp16 = model(input_data)
+
         # last token logits
         probabilities = F.softmax(output[0][-1], dim=0)
         max_index = torch.argmax(probabilities)

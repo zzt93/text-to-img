@@ -40,6 +40,7 @@ def directory(path_type: PathType, root_dir: str) -> str:
 
 
 transformer_train_data_file = "num.text"
+transformer_calib_data_file = "calib.text"
 tokenizer_model_file = "tokenizer"
 coder_model_file = "feature.pt"
 ot_model_file = "feature.pt"

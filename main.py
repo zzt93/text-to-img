@@ -13,6 +13,7 @@ from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 
 import coder
+import nncf_profile
 import ot
 import transformer
 import util
@@ -145,7 +146,17 @@ def predict(transformer_model: nn.Module, tokenizer: minbpe.base.Tokenizer, ot_r
     while gen_feature is None:
         print('try: {}'.format(cnt))
         user_input = util.replace_number(user_input)
-        res = transformer.run_transformer(transformer_model, tokenizer, user_input, force_dim=18)
+        with torch.profiler.profile(
+                activities=[torch.profiler.ProfilerActivity.CUDA, torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.MTIA, torch.profiler.ProfilerActivity.XPU],
+                # schedule=torch.profiler.schedule(wait=1, warmup=1, active=3),
+                with_stack=True,  # 必须开启
+                # record_shapes=True,  # 推荐开启
+                profile_memory=True,
+                on_trace_ready=torch.profiler.tensorboard_trace_handler('./logs')
+        ) as prof:
+            with torch.profiler.record_function('model_inference'):
+                res = transformer.run_transformer(transformer_model, tokenizer, user_input, force_dim=latent_dim)
+
         # res = '(1) [0.4444007873535156, 0.4003410339355469, 0.4445304870605469, -0.4441642761230469, 0.044643402099609375, -0.4440269470214844, 0.4443473815917969, 0.044666290283203125, 0.4445228576660156, -0.4449653625488281, -0.044864654541015625, 0.4440574645996094, -0.4441566467285156, -0.4445762634277344, -0.4447441101074219, -0.4445610046386719, -0.4443626403808594, 0.044330596923828125]'
         # res = '(28888) [0.4000816345214844, 0.4666328430175781, 0.4448738098144531, 0.040279388427734375, -0.08082199096679688, 0.006069183349609375, -0.06620407104492188, 0.4005851745605469, 0.4076805114746094, 0.4003181457519531, 0.4008674621582031, 0.4003181457519531, -0.4044227600097656, 0.3088493347167969, 0.006816864013671875, 0.008815765380859375, 0.040081024169921875, -0.000476837158203125]'
         # res = '(1888) [0.44408416748046875, 0.44606781005859375, 0.40062713623046875, 0.48871612548828125, -0.04445648193359375, 0.04451751708984375, -0.08884429931640625, 0.46446990966796875, 0.48860931396484375, 0.46608734130859375, 0.40479278564453125, -0.04610443115234375, 0.00878143310546875, 0.44489288330078125, 0.34412384033203125, 0.44487762451171875, 0.04602813720703125, -0.46660614013671875]'
@@ -220,6 +231,9 @@ if __name__ == '__main__':
         encoder = get_encoder(dim_y, config.mnist_img_dim, ['cnn-l'])
         coder_model_dir = directory(PathType.model, coder_dir)
         util.resume_model(encoder, coder_model_dir)
+
+        # nncf_profile.generate_calibration_data(40, my_transformer, tokenizer, args.latent_dim)
+        # nncf_profile.eval_use_nncf(tokenizer, my_transformer)
 
         print('predict [ot_opt={}]'.format(ot_opt))
         while True:
