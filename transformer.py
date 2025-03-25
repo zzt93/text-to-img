@@ -1,5 +1,7 @@
 import math
 from abc import ABCMeta
+
+from torch.nn.modules.module import T
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 import torch
@@ -11,15 +13,22 @@ from torch.nn.utils.rnn import pad_sequence
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+import attention
 import config
 import minbpe.base
-import minbpe.regex
+import minbpe.regex_impl
 import util
 from util import load_texts
 
 
 class AbsTransformer(nn.Module, metaclass=ABCMeta):
-    pass
+
+    def clear_kv_cache(self):
+        pass
+
+    def is_cache_available(self):
+        return False
 
 
 class CrossAttentionTransformer(AbsTransformer):
@@ -120,16 +129,20 @@ class PositionalEncoding(nn.Module):
         div_term = torch.exp(torch.arange(0, d_model, 2).float() * -(torch.log(torch.tensor(10000.0)) / d_model))
         self.encoding[:, 0::2] = torch.sin(position * div_term)
         self.encoding[:, 1::2] = torch.cos(position * div_term)
-        self.encoding = self.encoding.unsqueeze(0)
+        dev = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
+        self.encoding = self.encoding.unsqueeze(0).to(dev)
 
-    def forward(self, x):
-        return x + self.encoding[:, :x.size(1)].to(x.device)
+    def forward(self, x, index=None):
+        if index is not None:
+            return x + self.encoding[:, index]
+        else:
+            return x + self.encoding[:, :x.size(1)]
 
 
 class MyTransformerDecoderLayer(nn.Module):
     def __init__(self, d_model, nhead, dim_feedforward, dropout):
         super(MyTransformerDecoderLayer, self).__init__()
-        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
+        self.self_attn = attention.MultiheadAttentionWithCache(d_model, nhead, dropout=dropout, batch_first=True)
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.dropout = nn.Dropout(dropout)
         self.linear2 = nn.Linear(dim_feedforward, d_model)
@@ -139,22 +152,19 @@ class MyTransformerDecoderLayer(nn.Module):
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
 
-    def forward(self, src, src_key_padding_mask=None, causal_mask=None):
-        dev = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
-        # if torch.backends.mps.is_available():
-        #     # bug of MPS in pytorch 2.3.1, can't direct generate on dev. 2.6.0 is fixed
-        #       causal_mask = nn.Transformer.generate_square_subsequent_mask(src.shape[1]).to(dev)
-        # else:
-        if causal_mask is None:
-            causal_mask = nn.Transformer.generate_square_subsequent_mask(src.shape[1], device=dev)
-        causal_mask = causal_mask[:src.shape[1], :src.shape[1]]
-        src2 = self.self_attn(src, src, src, attn_mask=causal_mask, key_padding_mask=src_key_padding_mask, is_causal=True)[0]
+    def forward(self, src, src_key_padding_mask=None, causal_mask=None, cache=None):
+        src2, _, new_cache = self.self_attn(src, src, src, attn_mask=causal_mask, key_padding_mask=src_key_padding_mask, is_causal=True, cache=cache)
         src = src + self.dropout1(src2)
         src = self.norm1(src)
         src2 = self.linear2(self.dropout(F.relu(self.linear1(src))))
         src = src + self.dropout2(src2)
         src = self.norm2(src)
-        return src
+        return src, new_cache
+
+    def train(self: T, mode: bool = True) -> T:
+        if mode is False and config.enable_kv_cache:
+            self.self_attn.enable_cache()
+        return super().train(mode)
 
 
 class MyTransformer(AbsTransformer):
@@ -167,13 +177,48 @@ class MyTransformer(AbsTransformer):
         self.decoder = nn.Linear(d_model, vocab_size)
         self.d_model = d_model
 
-    def forward(self, input_ids, src_key_padding_mask=None, causal_mask=None):
+        self.num_layers = num_layers
+        self.enable_cache = False
+        self.k_caches = None
+        self.v_caches = None
+
+    def forward(self, input_ids, src_key_padding_mask=None, causal_mask=None, index=None):
         # 对嵌入向量进行缩放，使得其范数与位置编码（positional encoding）的范数相当。这种缩放帮助稳定训练过程。
         input_ids = self.embedding(input_ids) * math.sqrt(self.d_model)
-        input_ids = self.pos_encoder(input_ids)
-        for layer in self.layers:
-            input_ids = layer(input_ids, src_key_padding_mask=src_key_padding_mask, causal_mask=causal_mask)
-        return self.decoder(input_ids)
+        if self.enable_cache and index is not None:
+            input_ids = self.pos_encoder(input_ids, index)
+            for i in range(len(self.layers)):
+                layer = self.layers[i]
+                cache = (self.k_caches[i, :, :index - 1, :], self.v_caches[i, :, :index - 1, :])
+                input_ids, new_cache = layer(input_ids, src_key_padding_mask=src_key_padding_mask, causal_mask=causal_mask, cache=cache)
+                self.k_caches[i, :, index, :] = new_cache[0]
+                self.v_caches[i, :, index, :] = new_cache[1]
+            return self.decoder(input_ids)
+        else:
+            input_ids = self.pos_encoder(input_ids)
+            for i in range(len(self.layers)):
+                layer = self.layers[i]
+                input_ids, new_cache = layer(input_ids, src_key_padding_mask=src_key_padding_mask, causal_mask=causal_mask)
+                if self.enable_cache:
+                    index = new_cache[0].size(1)
+                    self.k_caches[i, :, :index, :] = new_cache[0]
+                    self.v_caches[i, :, :index, :] = new_cache[1]
+            return self.decoder(input_ids)
+
+    def train(self: T, mode: bool = True) -> T:
+        if mode is False:
+            self.enable_cache = config.enable_kv_cache
+            batch_size = 1
+            self.k_caches = torch.zeros(self.num_layers, batch_size, config.max_seq_len, self.d_model, device=config.device)
+            self.v_caches = torch.zeros_like(self.k_caches, device=config.device)
+        return super().train(mode)
+
+    def clear_kv_cache(self):
+        self.k_caches.zero_()
+        self.v_caches.zero_()
+
+    def is_cache_available(self):
+        return self.enable_cache
 
 
 class PaddingTextDataset(Dataset):
@@ -269,18 +314,40 @@ def train_tokenizer(t: minbpe.base.Tokenizer, root_dir: str, **kwargs):
     return t
 
 
-def run_transformer(transformer: nn.Module, tokenizer: minbpe.base.Tokenizer, input: str, force_dim: int = None, **kwargs):
+def generate_square_subsequent_mask_bool(sz: int, device) -> torch.Tensor:
+    # 生成上三角矩阵（不包含对角线），True 表示需要遮蔽的位置
+    mask = torch.triu(torch.ones(sz, sz, dtype=torch.bool, device=device), diagonal=1)
+    return mask
+
+
+def run_transformer(transformer: AbsTransformer, tokenizer: minbpe.base.Tokenizer, input: str, force_dim: int = None, **kwargs):
     device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
-    max_index = 0
+    max_index = -1
     dim = force_dim
     print(input, end='', flush=True)
 
-    causal_mask = nn.Transformer.generate_square_subsequent_mask(500, device=device)
+    # if torch.backends.mps.is_available():
+    #     # bug of MPS in pytorch 2.3.1, can't direct generate on dev. 2.6.0 is fixed
+    #       causal_mask = nn.Transformer.generate_square_subsequent_mask(src.shape[1]).to(dev)
+    # else:
+    #
+    full_causal_mask = torch.full(size=(1, config.max_seq_len), fill_value=False, device=device, dtype=bool)
+    full_2d_causal_mask = generate_square_subsequent_mask_bool(config.max_seq_len, device=device)
+
+    index = len(tokenizer.encode(input))
 
     while max_index != tokenizer.special_tokens[endoftext]:
-        # .unsqueeze(0) add a batch dimension
         with torch.no_grad():
-            output = transformer(torch.tensor(tokenizer.encode(input)).unsqueeze(0).to(device), causal_mask=causal_mask)
+            if transformer.is_cache_available() and max_index != -1:
+                causal_mask = full_causal_mask[:, :index]
+                last = torch.tensor([max_index], device=device).unsqueeze(0)
+                output = transformer(last, causal_mask=causal_mask, index=index)
+            else:
+                # .unsqueeze(0) add a batch dimension
+                input_ids = torch.tensor(tokenizer.encode(input), device=device).unsqueeze(0)
+                causal_mask = full_2d_causal_mask[:index, :index]
+                output = transformer(input_ids, causal_mask=causal_mask)
+
         # if torch.cuda.is_available():
         #     with torch.no_grad():
         #         with autocast():
@@ -301,6 +368,9 @@ def run_transformer(transformer: nn.Module, tokenizer: minbpe.base.Tokenizer, in
 
         print(next, end='', flush=True)
         input += next
+        index += 1
+
+    transformer.clear_kv_cache()
 
 
 def train_transformer(model: nn.Module, tokenizer: minbpe.base.Tokenizer, root_dir: str, resume: bool, epochs: int = 10, lr: float = 5e-5, batch_size: int = 2, **kwargs):

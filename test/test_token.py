@@ -10,11 +10,11 @@ for text in text_list:
     all_text += ("The coordinates of the %s-th %s are %s" % (text[start + 1:end], text[0:start], text[end + 1 + 1:])) + endoftext
 
 
-import minbpe.regex
+import minbpe.regex_impl
 import torch
 from torch.nn.utils.rnn import pad_sequence
 
-tokenizer = minbpe.regex.RegexTokenizer()
+tokenizer = minbpe.regex_impl.RegexTokenizer()
 a=tokenizer.encode('数字0(54597) [-0.40625, -0.03125, -0.03125, 0.15625, -0.21875, 0.46875, 0.03125, 0.34375, -0.03125, -0.34375, -0.40625, -0.09375, 0.15625, 0.15625, -0.15625, -0.46875, 0.28125, 0.09375]')
 
 

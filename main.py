@@ -4,7 +4,7 @@ import fnmatch
 import os
 
 import config
-import minbpe.regex
+import minbpe.regex_impl
 import minbpe.base
 
 import torch.nn as nn
@@ -94,7 +94,7 @@ def get_tokenizer(root_dir):
 
 def train_tokenizer(root_dir: str, train_opt: dict):
     print('train tokenizer [train_opt={}, dir={}]'.format(train_opt, root_dir))
-    model = minbpe.regex.RegexTokenizer()
+    model = minbpe.regex_impl.RegexTokenizer()
     return transformer.train_tokenizer(model, root_dir, **train_opt)
 
 
@@ -138,7 +138,7 @@ def load_model(model_pattern: str, model_path: str, model: nn.Module) -> None:
 
 
 
-def predict(transformer_model: nn.Module, tokenizer: minbpe.base.Tokenizer, ot_raw: ot.OMTRaw, encoder: coder.AutoEncoder, user_input: str, ot_opt: dict, latent_dim: int) -> None:
+def predict(transformer_model: transformer.AbsTransformer, tokenizer: minbpe.base.Tokenizer, ot_raw: ot.OMTRaw, encoder: coder.AutoEncoder, user_input: str, ot_opt: dict, latent_dim: int) -> None:
     # use transformer to map text to Gaussian latent token
     device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
     gen_feature = None
