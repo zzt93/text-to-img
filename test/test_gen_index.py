@@ -22,8 +22,8 @@ y_features = torch.tensor([[-0.5318,  0.1094, -1.1009, -0.5525],
         [-1.1226,  0.4356, -1.3921,  0.0991]])
 # 4 samples, top3, 12 yi(0~11)
 # topk_index = torch.tensor([[7, 11, 10, 9, 7, 11, 10, 9], [3, 2, 1, 3, 2, 3, 2, 2]])
-topk_index = torch.tensor([[7, 11, 7, 9, 7, 11, 7, 9],
-                           [3, 2, 1, 3, 2, 3, 5, 6]])
+topk_index = torch.tensor([[7, 7, 7, 7, 7, 7, 7, 7],
+                           [3, 2, 1, 11, 9, 8, 5, 6]])
 
 
 theta = torch.tensor([0.7854, 0.7854, 1.5708, 1.5708, 1.0472, 1.5708, 1.0472, 0.7854])
@@ -32,8 +32,8 @@ thresh = 1.1  # threshold value
 condition = theta <= thresh
 _ = topk_index[:, condition]  # Filter columns (pick columns where theta <= 0.3)
 # Result: gen_index is:
-# tensor([[ 7, 11,  7,  7,  9],
-#         [ 3,  2,  2,  5,  6]])
+# tensor([[7, 7, 7, 7, 7],
+#         [3, 2, 9, 5, 6]])
 indices = torch.nonzero(condition).squeeze()
 # tensor([0, 1, 4, 6, 7])
 
