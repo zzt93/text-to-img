@@ -14,6 +14,5 @@ generate number image (MNIST like number) without pattern-confusion and pattern 
 
 # env
 ```shell
-pip install torch torchvision tensorboard torch-tb-profiler
-pip install nncf onnx onnxruntime
+pip install -r requirements.txt
 ```
