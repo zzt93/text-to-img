@@ -28,8 +28,7 @@ def generate_sample_and_ot(cpu_features: torch.tensor, ot_model_dir, gen_feature
     points_num = cpu_features.shape[0]
     dim_y = cpu_features.shape[1]
     ot = OMTRaw(cpu_features, points_num, points_num, dim_y, **ot_opt, model_dir=ot_model_dir)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
-    ot.set_h(torch.load(ot.h_path(), map_location=torch.device(device=device)))
+    ot.set_h(torch.load(ot.h_path(), map_location=torch.device(device=config.device)))
     gen_point_and_ot(ot, sample_batch, gen_feature_path, thresh=thresh, topk=topk, dissim=dissim, max_gen_samples=max_gen_samples)
 
 
@@ -70,15 +69,14 @@ def gen_point_and_ot(p_s: OMTRaw, sample_batch, generate_path, thresh: float, to
     # yi 是面的法向量，可以直接用于计算面的夹角
     y_features = p_s.y_features
     # ??? https://github.com/k2cu8/pyOMT/issues/4
-    device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
-    nm = torch.cat([y_features, -torch.ones(p_s.y_nums, 1).to(device)], dim=1)
+    nm = torch.cat([y_features, -torch.ones(p_s.y_nums, 1, device=config.device)], dim=1)
     # nm = y_features
     # 向量标准化，向量模为1，计算cos时就不需要除了
     nm /= torch.norm(nm, dim=1).view(-1, 1)
     # 向量点积
     cosine = torch.sum(nm[topk_index[0, :], :] * nm[topk_index[1, :], :], 1)
     # math.min(1, cosine)
-    cosine = torch.min(torch.ones([cosine.shape[0]]).to(device), cosine)
+    cosine = torch.min(torch.ones([cosine.shape[0]], device=config.device), cosine)
     # 面之间的弧度(top0&top1 * num_x, top0&top2 * num_x, ... top0&topk-1 * num_x)
     # shape: [(topk - 1) * num_x]
     theta = torch.acos(cosine)
@@ -97,9 +95,7 @@ def gen_point_and_ot(p_s: OMTRaw, sample_batch, generate_path, thresh: float, to
     # pdb.set_trace()
     condition = theta <= thresh
     _ = topk_index[:, condition]  # Filter columns (pick columns where theta <= 0.3)
-    # Result: gen_index is:
-    # tensor([[ 7, 11,  7,  7,  9],
-    #         [ 3,  2,  2,  5,  6]])
+
     indices = torch.nonzero(condition).view(-1)
     if indices.numel() == 0:
         return None
@@ -114,7 +110,7 @@ def gen_point_and_ot(p_s: OMTRaw, sample_batch, generate_path, thresh: float, to
         if mod_result not in seen_mod_results:
             seen_mod_results[mod_result] = True
             unique_indices.append(value.item())
-    # [0 1 6 7]
+
     print('可以用来生成新样本的sample索引 {} '.format(unique_indices))
     gen_index = topk_index[:, unique_indices]
 
@@ -127,7 +123,7 @@ def gen_point_and_ot(p_s: OMTRaw, sample_batch, generate_path, thresh: float, to
 
     '''generate new features'''
     # rand_w = torch.rand([num_gen,1])
-    rand_w = dissim * torch.ones([num_gen, 1]).to(device)
+    rand_w = dissim * torch.ones([num_gen, 1], device=config.device)
     # 加权平均
     gen_feature = y_features[gen_index[0, :], :] * (1 - rand_w) + y_features[gen_index[1, :], :] * rand_w
 
@@ -169,8 +165,7 @@ def reshape(topk_index, num_x, topk):
     # [原来第0行, 原来第0行 ... 原来第0行]
     # [原来第1行, 原来第2行 ... 原来第topk-1行]
     """
-    device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
-    tmp = -torch.ones([2, (topk - 1) * num_x], dtype=torch.long).to(device)
+    tmp = -torch.ones([2, (topk - 1) * num_x], dtype=torch.long, device=config.device)
     for ii in range(topk - 1):
         tmp[0, ii * num_x:(ii + 1) * num_x] = topk_index[0, :]
         tmp[1, ii * num_x:(ii + 1) * num_x] = topk_index[ii + 1, :]

@@ -3,6 +3,9 @@ import torch.nn as nn
 from typing import Optional, Tuple
 import torch.nn.functional as F
 
+import config
+
+
 class MultiheadAttentionWithCache(nn.MultiheadAttention):
     def __init__(self, embed_dim: int, num_heads: int, **kwargs):
         super().__init__(embed_dim, num_heads, **kwargs)
@@ -45,61 +48,111 @@ class MultiheadAttentionWithCache(nn.MultiheadAttention):
         """
         # 如果未启用缓存，直接调用原始方法
         if not self.cache_enabled:
-            t, w = super().forward(query, key, value, key_padding_mask, need_weights, attn_mask, is_causal)
+            t, w = super().forward(query, query, query, key_padding_mask, need_weights, attn_mask, is_causal)
             return t, w, None
 
-        # 自注意力模式：query/key/value 相同
-        if key is None:
-            key = query
-        if value is None:
-            value = query
-
-
+        # if batch_size == 1, remove this dim
+        if query.size(0) == 1:
+            query = query.squeeze(0)
         # 提取当前输入的键值对（未拼接缓存）
-        q, k_proj, v_proj = self._compute_kv(key, value)
+        q, k_proj, v_proj = self._compute_kv(query, cache is not None)
 
-        k, v = k_proj, k_proj
+        k, v = k_proj, v_proj
         # 如果提供了缓存，拼接历史缓存
         if cache is not None:
-            k = torch.cat([cache[0], k], dim=1)  # 沿序列维度拼接 (batch, seq_len, ...)
-            v = torch.cat([cache[1], v], dim=1)
+            k = torch.cat([cache[0], k], dim=0)  # 沿序列维度拼接 (seq_len, hid_dim)
+            v = torch.cat([cache[1], v], dim=0)
 
+        # qq, kk, vv = self._compute_kv(query, False)
+        # assert (kk[-1,:] == k[-1,:]).all()
+        # assert (vv[-1,:] == v[-1,:]).all()
 
         # 调用原始注意力计算
-        bsz, tgt_len, embed_dim = query.shape
+        bsz = 1
+        tgt_len = q.size(0)
+        if attn_mask.size(0) != tgt_len:
+            assert False, "attn_mask.size(0) != tgt_len"
+        src_len = k.size(0)
+        embed_dim = q.size(-1)
         num_heads = self.num_heads
         head_dim = self.head_dim
-        src_len = k.size(1)
 
-        q = q.view(bsz, num_heads, tgt_len, head_dim)
-        k = k.view(bsz, num_heads, src_len, head_dim)
-        v = v.view(bsz, num_heads, src_len, head_dim)
+        q = q.view(bsz, tgt_len, num_heads, head_dim).transpose(1, 2)
+        k = k.view(bsz, src_len, num_heads, head_dim).transpose(1, 2)
+        v = v.view(bsz, src_len, num_heads, head_dim).transpose(1, 2)
+        attn_mask = attn_mask.unsqueeze(0).unsqueeze(0)
 
+        # if cache is not None:
+        # print(q, k, v)
         attn_output = F.scaled_dot_product_attention(
-            q, k, v, attn_mask, 0.0, is_causal
+            q, k, v, attn_mask, 0.0, False
         )
         attn_output = (
             attn_output.permute(2, 0, 1, 3).contiguous().view(bsz * tgt_len, embed_dim)
         )
 
-        attn_output = F.linear(attn_output, self.out_proj_weight, self.out_proj_bias)
-        attn_output = attn_output.view(tgt_len, bsz, attn_output.size(1))
+        attn_output = F.linear(attn_output, self.out_proj.weight, self.out_proj.bias)
+        attn_output = attn_output.view(bsz, tgt_len, attn_output.size(1))
 
         new_cache = (k_proj.detach(), v_proj.detach())
 
         return attn_output, None, new_cache
 
-    def _compute_kv(self, key: torch.Tensor, value: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def _compute_kv(self, query: torch.Tensor, has_cache: bool) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """计算键值对（分离投影操作）"""
         # 复用 MultiheadAttention 的投影权重
         if self.in_proj_weight is not None:
             # 合并计算 q/k/v 的投影
-            qkv = F.linear(key, self.in_proj_weight, self.in_proj_bias)
+            if has_cache:
+                # 使用 [-1:, :] 来计算最后一行，会有一点数值误差，但是不影响
+                qkv = F.linear(query[-1:, :], self.in_proj_weight, self.in_proj_bias)[-1,:]
+            else:
+                qkv = F.linear(query, self.in_proj_weight, self.in_proj_bias)
             q, k, v = qkv.chunk(3, dim=-1)
+            # print(query, self.in_proj_weight, self.in_proj_bias, q, k, v)
+            if q.dim() == 1:
+                q = q.unsqueeze(0)
+                k = k.unsqueeze(0)
+                v = v.unsqueeze(0)
+
+            # a = F.linear(query[-1, :], self.in_proj_weight, self.in_proj_bias)
+            # aq, ak, av = a.chunk(3, dim=-1)
+            # print(torch.all(aq == q[-1, :]), torch.all(ak == k[-1, :]), torch.all(av == v[-1, :]))
+            #
+            # b = F.linear(query[-2:, :], self.in_proj_weight, self.in_proj_bias)[-1, :]
+            # bq, bk, bv = b.chunk(3, dim=-1)
+            # print(torch.all(bq == q[-1, :]), torch.all(bk == k[-1, :]), torch.all(bv == v[-1, :]))
+            #
+            # c = F.linear(query[-3:, :], self.in_proj_weight, self.in_proj_bias)[-1, :]
+            # cq, ck, cv = c.chunk(3, dim=-1)
+            # print(torch.all(cq == q[-1, :]), torch.all(ck == k[-1, :]), torch.all(cv == v[-1, :]))
+            #
+            # d = F.linear(query, self.in_proj_weight, self.in_proj_bias)[-1, :]
+            # dq, dk, dv = d.chunk(3, dim=-1)
+            # print(torch.all(dq == q[-1, :]), torch.all(dk == k[-1, :]), torch.all(dv == v[-1, :]))
+
+            # e = F.linear(query[-10:, :], self.in_proj_weight, self.in_proj_bias)[-1, :]
+            # eq, ek, ev = e.chunk(3, dim=-1)
+            # print(torch.all(eq == q[-1, :]), torch.all(ek == k[-1, :]), torch.all(ev == v[-1, :]))
+            #
+            # f = F.linear(query.squeeze(0), self.in_proj_weight, self.in_proj_bias)[-1, :]
+            # fq, fk, fv = f.chunk(3, dim=-1)
+            # print(torch.all(fq == q[-1, :]), torch.all(fk == k[-1, :]), torch.all(fv == v[-1, :]))
+            #
+            # g = F.linear(query.squeeze(0)[-1,:], self.in_proj_weight, self.in_proj_bias)
+            # gq, gk, gv = g.chunk(3, dim=-1)
+            # print(torch.all(gq == q[-1, :]), torch.all(gk == k[-1, :]), torch.all(gv == v[-1, :]))
+            #
+            # h = query @ self.in_proj_weight.transpose(0,1) + self.in_proj_bias
+            # hq, hk, hv = h.chunk(3, dim=-1)
+            # print(torch.all(hq == q[-1, :]), torch.all(hk == k[-1, :]), torch.all(hv == v[-1, :]))
+
+            # if key.size(1) == 1:
+            #     print(key, self.in_proj_weight, self.in_proj_bias, k)
         else:
             # 分别计算 k/v 的投影
-            k = F.linear(key, self.k_proj_weight, self.k_proj_bias)
-            v = F.linear(value, self.v_proj_weight, self.v_proj_bias)
-            q = F.linear(key, self.q_proj_weight, self.q_proj_bias)
+            k = F.linear(query, self.k_proj_weight, self.k_proj_bias)
+            q = F.linear(query, self.q_proj_weight, self.q_proj_bias)
+            v = F.linear(query, self.v_proj_weight, self.v_proj_bias)
 
         return q, k, v

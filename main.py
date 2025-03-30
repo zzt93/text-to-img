@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 
 import coder
-import nncf_profile
+# import nncf_profile
 import ot
 import transformer
 import util
@@ -146,16 +146,19 @@ def predict(transformer_model: transformer.AbsTransformer, tokenizer: minbpe.bas
     while gen_feature is None:
         print('try: {}'.format(cnt))
         user_input = util.replace_number(user_input)
-        with torch.profiler.profile(
-                activities=[torch.profiler.ProfilerActivity.CUDA, torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.MTIA, torch.profiler.ProfilerActivity.XPU],
-                # schedule=torch.profiler.schedule(wait=1, warmup=1, active=3),
-                with_stack=True,  # 必须开启
-                # record_shapes=True,  # 推荐开启
-                profile_memory=True,
-                on_trace_ready=torch.profiler.tensorboard_trace_handler('./logs')
-        ) as prof:
-            with torch.profiler.record_function('model_inference'):
-                res = transformer.run_transformer(transformer_model, tokenizer, user_input, force_dim=latent_dim)
+        if config.profile:
+            with torch.profiler.profile(
+                    activities=[torch.profiler.ProfilerActivity.CUDA, torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.MTIA, torch.profiler.ProfilerActivity.XPU],
+                    # schedule=torch.profiler.schedule(wait=1, warmup=1, active=3),
+                    with_stack=True,  # 必须开启
+                    # record_shapes=True,  # 推荐开启
+                    profile_memory=True,
+                    on_trace_ready=torch.profiler.tensorboard_trace_handler('./logs')
+            ) as prof:
+                with torch.profiler.record_function('model_inference'):
+                    res = transformer.run_transformer(transformer_model, tokenizer, user_input, force_dim=latent_dim)
+        else:
+            res = transformer.run_transformer(transformer_model, tokenizer, user_input, force_dim=latent_dim)
 
         # res = '(1) [0.4444007873535156, 0.4003410339355469, 0.4445304870605469, -0.4441642761230469, 0.044643402099609375, -0.4440269470214844, 0.4443473815917969, 0.044666290283203125, 0.4445228576660156, -0.4449653625488281, -0.044864654541015625, 0.4440574645996094, -0.4441566467285156, -0.4445762634277344, -0.4447441101074219, -0.4445610046386719, -0.4443626403808594, 0.044330596923828125]'
         # res = '(28888) [0.4000816345214844, 0.4666328430175781, 0.4448738098144531, 0.040279388427734375, -0.08082199096679688, 0.006069183349609375, -0.06620407104492188, 0.4005851745605469, 0.4076805114746094, 0.4003181457519531, 0.4008674621582031, 0.4003181457519531, -0.4044227600097656, 0.3088493347167969, 0.006816864013671875, 0.008815765380859375, 0.040081024169921875, -0.000476837158203125]'
@@ -164,7 +167,7 @@ def predict(transformer_model: transformer.AbsTransformer, tokenizer: minbpe.bas
         # 数字5(19022) [-0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -0.5]
         start, end = res.index('('), res.index(')')
         parsed_list = ast.literal_eval(res[end + 1 + 1:])
-        sample_tensor = torch.tensor(parsed_list).to(device)
+        sample_tensor = torch.tensor(parsed_list, device=device)
 
         # use ot to map Gaussian latent token to real data latent token(filter pattern mixture & )
         gen_feature = ot.ot_a_sample(ot_raw, sample=sample_tensor, **ot_opt)

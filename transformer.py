@@ -124,17 +124,16 @@ class CrossAttentionTransformer(AbsTransformer):
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=5000):
         super(PositionalEncoding, self).__init__()
-        self.encoding = torch.zeros(max_len, d_model)
+        self.encoding = torch.zeros(max_len, d_model, device=config.device)
         position = torch.arange(0, max_len).unsqueeze(1).float()
         div_term = torch.exp(torch.arange(0, d_model, 2).float() * -(torch.log(torch.tensor(10000.0)) / d_model))
         self.encoding[:, 0::2] = torch.sin(position * div_term)
         self.encoding[:, 1::2] = torch.cos(position * div_term)
-        dev = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
-        self.encoding = self.encoding.unsqueeze(0).to(dev)
+        self.encoding = self.encoding.unsqueeze(0)
 
     def forward(self, x, index=None):
-        if index is not None:
-            return x + self.encoding[:, index]
+        if x.size(1) == 1:
+            return x + self.encoding[:, index-1]
         else:
             return x + self.encoding[:, :x.size(1)]
 
@@ -187,35 +186,41 @@ class MyTransformer(AbsTransformer):
         input_ids = self.embedding(input_ids) * math.sqrt(self.d_model)
         if self.enable_cache and index is not None:
             input_ids = self.pos_encoder(input_ids, index)
+            # print(input_ids)
             for i in range(len(self.layers)):
                 layer = self.layers[i]
-                cache = (self.k_caches[i, :, :index - 1, :], self.v_caches[i, :, :index - 1, :])
+                cache = (self.k_caches[i, :index - 1, :], self.v_caches[i, :index - 1, :])
                 input_ids, new_cache = layer(input_ids, src_key_padding_mask=src_key_padding_mask, causal_mask=causal_mask, cache=cache)
-                self.k_caches[i, :, index, :] = new_cache[0]
-                self.v_caches[i, :, index, :] = new_cache[1]
+                # print(input_ids)
+                if new_cache[0].size(0) == 1:
+                    self.k_caches[i, index-1, :] = new_cache[0]
+                    self.v_caches[i, index-1, :] = new_cache[1]
+            if not self.training and input_ids.size(1) > 1:
+                input_ids = input_ids[:, -1, :].unsqueeze(0)
             return self.decoder(input_ids)
         else:
             input_ids = self.pos_encoder(input_ids)
+            # print(input_ids)
             for i in range(len(self.layers)):
                 layer = self.layers[i]
                 input_ids, new_cache = layer(input_ids, src_key_padding_mask=src_key_padding_mask, causal_mask=causal_mask)
+                # if input_ids.size(1) > 15:
+                #     print(input_ids)
                 if self.enable_cache:
-                    index = new_cache[0].size(1)
-                    self.k_caches[i, :, :index, :] = new_cache[0]
-                    self.v_caches[i, :, :index, :] = new_cache[1]
+                    index = new_cache[0].size(0)
+                    self.k_caches[i, :index, :] = new_cache[0]
+                    self.v_caches[i, :index, :] = new_cache[1]
+            if not self.training:
+                input_ids = input_ids[:, -1, :].unsqueeze(0)
             return self.decoder(input_ids)
 
     def train(self: T, mode: bool = True) -> T:
         if mode is False:
             self.enable_cache = config.enable_kv_cache
-            batch_size = 1
-            self.k_caches = torch.zeros(self.num_layers, batch_size, config.max_seq_len, self.d_model, device=config.device)
+            self.k_caches = torch.zeros(self.num_layers, config.max_seq_len, self.d_model, device=config.device)
             self.v_caches = torch.zeros_like(self.k_caches, device=config.device)
         return super().train(mode)
 
-    def clear_kv_cache(self):
-        self.k_caches.zero_()
-        self.v_caches.zero_()
 
     def is_cache_available(self):
         return self.enable_cache
@@ -249,9 +254,9 @@ class PaddingTextDataset(Dataset):
     def __getitem__(self, idx):
         # Get the block and convert it to a tensor
         block = self.examples[idx]
-        input_ids = torch.tensor(block[:-1], dtype=torch.long)  # All but the last token
-        input_mask = torch.tensor(self.padding_masks[idx][:-1])
-        labels = torch.tensor(block[1:], dtype=torch.long)  # All but the first token
+        input_ids = torch.tensor(block[:-1], dtype=torch.long, device=config.device)  # All but the last token
+        input_mask = torch.tensor(self.padding_masks[idx][:-1], device=config.device)
+        labels = torch.tensor(block[1:], dtype=torch.long, device=config.device)  # All but the first token
         return input_ids, labels, input_mask
 
 
@@ -315,8 +320,15 @@ def train_tokenizer(t: minbpe.base.Tokenizer, root_dir: str, **kwargs):
 
 
 def generate_square_subsequent_mask_bool(sz: int, device) -> torch.Tensor:
-    # 生成上三角矩阵（不包含对角线），True 表示需要遮蔽的位置
-    mask = torch.triu(torch.ones(sz, sz, dtype=torch.bool, device=device), diagonal=1)
+    if config.enable_kv_cache:
+        # F.scaled_dot_product_attention
+        # 生成上三角矩阵（不包含对角线），False 表示需要遮蔽的位置
+        upper_tri = torch.triu(torch.ones(sz, sz, device=device), diagonal=1)
+        # 转换成布尔掩码（False 表示需要遮蔽的位置）
+        mask = upper_tri == 0
+    else:
+        # 生成上三角矩阵（不包含对角线），True 表示需要遮蔽的位置
+        mask = torch.triu(torch.ones(sz, sz, dtype=torch.bool, device=device), diagonal=1)
     return mask
 
 
@@ -331,17 +343,24 @@ def run_transformer(transformer: AbsTransformer, tokenizer: minbpe.base.Tokenize
     #       causal_mask = nn.Transformer.generate_square_subsequent_mask(src.shape[1]).to(dev)
     # else:
     #
-    full_causal_mask = torch.full(size=(1, config.max_seq_len), fill_value=False, device=device, dtype=bool)
+    if config.enable_kv_cache:
+        mask_value = True
+    else:
+        mask_value = False
+    full_causal_mask = torch.full(size=(1, config.max_seq_len), fill_value=mask_value, device=device, dtype=bool)
     full_2d_causal_mask = generate_square_subsequent_mask_bool(config.max_seq_len, device=device)
+    # full_2d_causal_mask = nn.Transformer.generate_square_subsequent_mask(config.max_seq_len, device=device)
 
     index = len(tokenizer.encode(input))
 
     while max_index != tokenizer.special_tokens[endoftext]:
         with torch.no_grad():
             if transformer.is_cache_available() and max_index != -1:
+                # last = torch.tensor([max_index], device=device).unsqueeze(0)
                 causal_mask = full_causal_mask[:, :index]
-                last = torch.tensor([max_index], device=device).unsqueeze(0)
-                output = transformer(last, causal_mask=causal_mask, index=index)
+                input_ids = torch.tensor(tokenizer.encode(input), device=device).unsqueeze(0)
+                # causal_mask = full_2d_causal_mask[:index, :index]
+                output = transformer(input_ids, causal_mask=causal_mask, index=index)
             else:
                 # .unsqueeze(0) add a batch dimension
                 input_ids = torch.tensor(tokenizer.encode(input), device=device).unsqueeze(0)
@@ -403,7 +422,7 @@ def train_transformer(model: nn.Module, tokenizer: minbpe.base.Tokenizer, root_d
                 print(f"MPS Memory - Allocated: {torch.mps.current_allocated_memory() / (1024 ** 2):.2f} MB, "
                       f"Driver : {torch.mps.driver_allocated_memory() / (1024 ** 2):.2f} MB")
 
-            inputs, labels, padding = inputs.to(device), labels.to(device), padding.to(device)
+            inputs, labels, padding = inputs, labels, padding
 
             # Forward pass
             outputs = model(input_ids=inputs, src_key_padding_mask=padding)
