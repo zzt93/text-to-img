@@ -356,11 +356,11 @@ def run_transformer(transformer: AbsTransformer, tokenizer: minbpe.base.Tokenize
     while max_index != tokenizer.special_tokens[endoftext]:
         with torch.no_grad():
             if transformer.is_cache_available() and max_index != -1:
-                # last = torch.tensor([max_index], device=device).unsqueeze(0)
+                last = torch.tensor([max_index], device=device).unsqueeze(0)
                 causal_mask = full_causal_mask[:, :index]
-                input_ids = torch.tensor(tokenizer.encode(input), device=device).unsqueeze(0)
+                # input_ids = torch.tensor(tokenizer.encode(input), device=device).unsqueeze(0)
                 # causal_mask = full_2d_causal_mask[:index, :index]
-                output = transformer(input_ids, causal_mask=causal_mask, index=index)
+                output = transformer(last, causal_mask=causal_mask, index=index)
             else:
                 # .unsqueeze(0) add a batch dimension
                 input_ids = torch.tensor(tokenizer.encode(input), device=device).unsqueeze(0)
