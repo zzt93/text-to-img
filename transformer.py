@@ -333,7 +333,6 @@ def generate_square_subsequent_mask_bool(sz: int, device) -> torch.Tensor:
 
 
 def run_transformer(transformer: AbsTransformer, tokenizer: minbpe.base.Tokenizer, input: str, force_dim: int = None, **kwargs):
-    device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
     max_index = -1
     dim = force_dim
     print(input, end='', flush=True)
@@ -347,25 +346,35 @@ def run_transformer(transformer: AbsTransformer, tokenizer: minbpe.base.Tokenize
         mask_value = True
     else:
         mask_value = False
-    full_causal_mask = torch.full(size=(1, config.max_seq_len), fill_value=mask_value, device=device, dtype=bool)
-    full_2d_causal_mask = generate_square_subsequent_mask_bool(config.max_seq_len, device=device)
-    # full_2d_causal_mask = nn.Transformer.generate_square_subsequent_mask(config.max_seq_len, device=device)
+    full_causal_mask = torch.full(size=(1, config.max_seq_len), fill_value=mask_value, device=config.device, dtype=bool)
+    full_2d_causal_mask = generate_square_subsequent_mask_bool(config.max_seq_len, device=config.device)
+    # full_2d_causal_mask = nn.Transformer.generate_square_subsequent_mask(config.max_seq_len, device=config.device)
 
     index = len(tokenizer.encode(input))
 
     while max_index != tokenizer.special_tokens[endoftext]:
         with torch.no_grad():
             if transformer.is_cache_available() and max_index != -1:
-                last = torch.tensor([max_index], device=device).unsqueeze(0)
+                last = torch.tensor([max_index], device=config.device).unsqueeze(0)
                 causal_mask = full_causal_mask[:, :index]
-                # input_ids = torch.tensor(tokenizer.encode(input), device=device).unsqueeze(0)
+                # input_ids = torch.tensor(tokenizer.encode(input), device=config.device).unsqueeze(0)
                 # causal_mask = full_2d_causal_mask[:index, :index]
-                output = transformer(last, causal_mask=causal_mask, index=index)
+                if config.device_string != 'cpu':
+                    from torch.amp import autocast
+                    with autocast(device_type=config.device_string):
+                        output = transformer(last, causal_mask=causal_mask, index=index)
+                else:
+                    output = transformer(last, causal_mask=causal_mask, index=index)
             else:
                 # .unsqueeze(0) add a batch dimension
-                input_ids = torch.tensor(tokenizer.encode(input), device=device).unsqueeze(0)
+                input_ids = torch.tensor(tokenizer.encode(input), device=config.device).unsqueeze(0)
                 causal_mask = full_2d_causal_mask[:index, :index]
-                output = transformer(input_ids, causal_mask=causal_mask)
+                if config.device_string != 'cpu':
+                    from torch.amp import autocast
+                    with autocast(device_type=config.device_string):
+                        output = transformer(input_ids, causal_mask=causal_mask)
+                else:
+                    output = transformer(input_ids, causal_mask=causal_mask)
 
         # if torch.cuda.is_available():
         #     with torch.no_grad():

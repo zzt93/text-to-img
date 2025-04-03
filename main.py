@@ -175,6 +175,8 @@ def predict(transformer_model: transformer.AbsTransformer, tokenizer: minbpe.bas
 
     # use decoder to map latent token to image
     coder.plot_encoder_features(encoder, [gen_feature], [user_input])
+    # coder.plot_encoder_features(encoder, [ot_raw.y_features[59575]], ["数字2 59575"])
+    # coder.plot_encoder_features(encoder, [ot_raw.y_features[44902]], ["数字2 44902"])
 
 
 if __name__ == '__main__':
