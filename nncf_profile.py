@@ -11,12 +11,9 @@ from nncf.torch import create_compressed_model
 import minbpe.base
 import util
 from transformer import PaddingTextDataset
+import os
 
 quantization_config = NNCFConfig({
-    "input_info": [{
-        "sample_size": [1, 128],  # 输入维度 [batch, seq_len]
-        "type": "long"  # 输入数据类型
-    }],
     "compression": {
         "algorithm": "quantization",
         # 预设模式：平衡精度与速度
@@ -72,9 +69,10 @@ quantization_config = NNCFConfig({
 
         # 排除敏感层
         "ignored_scopes": [
-            "*.layer_norm*",  # 跳过LayerNorm层
-            "*position_embeddings*",  # 保护位置编码
-            "*.pooler*"  # 跳过池化层
+            "*embedding*",  # embedding
+            "*pos_encoder*",  # 保护位置编码
+            "*norm*", # norm层
+            "*_attn*"
         ],
 
         # 高级优化参数
@@ -92,31 +90,66 @@ quantization_config = NNCFConfig({
 })
 
 
-def generate_calibration_data(samples: int, transformer_model: nn.Module, tokenizer: minbpe.base.Tokenizer, latent_dim: int) -> None:
+def get_tokenizer(root_dir):
+    return train_tokenizer(root_dir, {})
+
+
+def train_tokenizer(root_dir: str, train_opt: dict):
+    print('train tokenizer [train_opt={}, dir={}]'.format(train_opt, root_dir))
+    model = minbpe.regex_impl.RegexTokenizer()
+    return transformer.train_tokenizer(model, root_dir, **train_opt)
+
+
+def get_transformer(transformer_root: str, vocab_size, train_opt, d_model=768, nhead=12, num_layers=12,
+                    dim_feedforward=3072, dropout=0.1, **kwargs):
+    print('transformer [train_opt={}, transformer_root={}, vocab_size={}]'.format(train_opt, transformer_root,
+                                                                                  vocab_size))
+    device = torch.device(
+        'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
+    model = transformer.MyTransformer(vocab_size=vocab_size, d_model=d_model, nhead=nhead, num_layers=num_layers,
+                                      dim_feedforward=dim_feedforward, dropout=dropout).to(device)
+    if False:
+        num_encoder_layers = num_layers
+        num_decoder_layers = num_layers
+        max_seq_length = 512
+        model = CrossAttentionTransformer(vocab_size, d_model, nhead, num_encoder_layers, num_decoder_layers,
+                                          dim_feedforward, max_seq_length, dropout).to(device)
+    return model
+
+
+def generate_calibration_data(samples: int, transformer_model: transformer.AbsTransformer,
+                              tokenizer: minbpe.base.Tokenizer, latent_dim: int) -> None:
     res = []
     for i in range(samples):
         user_input = "数字{}".format(i % 10)
         user_input = util.replace_number(user_input)
-        res.append(transformer.run_transformer(transformer_model, tokenizer, user_input, force_dim=latent_dim))
+        res.append(user_input)
+        #res.append(transformer.run_transformer(transformer_model, tokenizer, user_input, force_dim=latent_dim))
     p = config.path(config.PathType.train, "./transformer", config.transformer_calib_data_file)
+    print(p, res)
     util.save_data(p, res, "")
 
 
 # 1. 环境准备
-def prepare_calibration_data(tokenizer: minbpe.base.Tokenizer, batch_size=8, seq_length=128,):
+from nncf import Dataset as NNCfDataset
+def prepare_calibration_data(batch_size=8, seq_length=512):
     p = config.path(config.PathType.train, "./transformer", config.transformer_calib_data_file)
     texts = util.load_texts(p)
-    calibration_dataset = nncf.Dataset(texts, lambda x: {
-        'input_ids': x['input_ids'].unsqueeze(0),
-        'attention_mask': x['attention_mask'].unsqueeze(0)
-    })
-    dataset = PaddingTextDataset(texts, tokenizer)
-    return calibration_dataset
+    texts = [
+        {
+            "input_ids": sample[:-1]
+        }
+        for sample in texts
+    ]
+
+    return NNCfDataset(texts)
+
 
 
 # 5. 量化评估流程
 def collect_metrics(model, eval_loader, compression_ctrl):
-    device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
+    device = torch.device(
+        'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
     """自动化指标收集"""
     model.eval()
     model.to(device)
@@ -150,8 +183,6 @@ def collect_metrics(model, eval_loader, compression_ctrl):
                              shift_labels.view(-1))
             total_ppl += torch.exp(loss).item()
 
-
-
     return {
         "perplexity": total_ppl / len(eval_loader),
         "latency(ms)": sum(timings) / len(timings),
@@ -160,19 +191,49 @@ def collect_metrics(model, eval_loader, compression_ctrl):
     }
 
 
+class TransformerWrapper(nn.Module):
+    def __init__(self, core_model, tokenizer):
+        super().__init__()
+        self.core_model = core_model
+        self.tokenizer = tokenizer
+
+    def forward(self, input_ids: str):
+        return transformer.run_transformer(
+            self.core_model,
+            self.tokenizer,
+            input_ids,
+            force_dim=18
+        )
 # 6. 执行评估
 def eval_use_nncf(tokenizer, my_transformer):
     device = nncf.TargetDevice.GPU if torch.cuda.is_available() else nncf.TargetDevice.CPU
-    calibration_dataset = prepare_calibration_data(tokenizer=tokenizer)
+    #calibration_dataset = prepare_calibration_data(tokenizer=tokenizer)
+    calibration_dataset = prepare_calibration_data()
 
+    wrapped_model = TransformerWrapper(my_transformer, tokenizer)
+
+    for name, module in wrapped_model.named_modules():
+        print(f"Name: {name}, Type: {type(module)}")
+
+    # 转换为NNCFConfig对象
+    # nncf_config = NNCFConfig(quantization_config)
     # 4. 创建量化模型并自动收集指标
     compressed_model = nncf.quantize(
-        my_transformer,
+        wrapped_model,
         calibration_dataset,
         model_type=nncf.ModelType.TRANSFORMER,
         preset=nncf.QuantizationPreset.MIXED,
         target_device=device,
-        ignored_scope=nncf.IgnoredScope(types=["Embedding", "LayerNorm"])
+        ignored_scope=nncf.IgnoredScope([
+            # 1. 嵌入层（精确匹配）
+            "core_model.embedding",
+            "core_model.pos_encoder",
+
+            # 2. 所有LayerNorm及其子层（跨层级匹配）
+            "*.*.norm*",  # 匹配 layers.0.norm1 等
+            "*.*.ln*",  # 冗余匹配其他可能的命名变体
+
+        ])
     )
 
     for name, module in compressed_model.named_modules():
@@ -186,7 +247,6 @@ def eval_use_nncf(tokenizer, my_transformer):
     # 5. 收集基础统计信息
     print("Quantization statistics:")
     print(compression_ctrl.statistics().to_str())
-
 
     metrics = collect_metrics(compressed_model, calibration_dataset, )
 
@@ -206,3 +266,42 @@ def eval_use_nncf(tokenizer, my_transformer):
         'model': compressed_model.state_dict(),
         'quant_metadata': compression_ctrl.get_compression_state()
     }, 'quantized_model.pth')
+
+
+def main():
+    device = torch.device(
+        'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
+    tokenizer_root = './tokenizer'
+    transformer_root = './transformer'
+    transformer_opt = {}
+    tokenizer = get_tokenizer(tokenizer_root)
+    print(transformer_root, len(tokenizer.vocab), transformer_opt, **transformer_opt)
+    my_transformer = get_transformer(transformer_root, len(tokenizer.vocab), transformer_opt, **transformer_opt)
+    print(type(my_transformer))
+    transformer_model_dir = config.directory(config.PathType.model, transformer_root)
+    util.resume_model(my_transformer, transformer_model_dir, 'Epoch_*_transformer_*.pth')
+
+    my_transformer.eval()
+    latent_dim = 18
+    test_sample_num = 50
+
+    calib_data_path = config.path(config.PathType.train, "./transformer", config.transformer_calib_data_file)
+    if not os.path.exists(calib_data_path):
+        print("Generating calibration data...")
+        generate_calibration_data(
+            samples=256,  # Matches num_init_samples in config
+            transformer_model=my_transformer,
+            tokenizer=tokenizer,
+            latent_dim=latent_dim
+        )
+
+
+    print("Starting quantization process...")
+    eval_use_nncf(tokenizer, my_transformer)
+
+    print("Quantization process completed successfully!")
+
+#
+if __name__ == "__main__":
+
+    main()

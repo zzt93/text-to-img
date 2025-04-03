@@ -209,12 +209,14 @@ if __name__ == '__main__':
         train(args)
 
     if args.predict:
+
         device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
 
         tokenizer_root = args.tokenizer_dir
         transformer_root = args.transformer_dir
         transformer_opt = ast.literal_eval(args.transformer_opt)
         tokenizer = get_tokenizer(tokenizer_root)
+        print(transformer_root, len(tokenizer.vocab), transformer_opt, **transformer_opt)
         my_transformer = get_transformer(transformer_root, len(tokenizer.vocab), transformer_opt, **transformer_opt)
         transformer_model_dir = config.directory(config.PathType.model, transformer_root)
         util.resume_model(my_transformer, transformer_model_dir, 'Epoch_*_transformer_*.pth')

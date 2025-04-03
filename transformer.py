@@ -182,6 +182,11 @@ class MyTransformer(AbsTransformer):
         self.v_caches = None
 
     def forward(self, input_ids, src_key_padding_mask=None, causal_mask=None, index=None):
+        device = torch.device(
+            'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
+
+        full_2d_causal_mask = generate_square_subsequent_mask_bool(config.max_seq_len, device=device)
+
         # 对嵌入向量进行缩放，使得其范数与位置编码（positional encoding）的范数相当。这种缩放帮助稳定训练过程。
         input_ids = self.embedding(input_ids) * math.sqrt(self.d_model)
         if self.enable_cache and index is not None:
@@ -336,7 +341,7 @@ def run_transformer(transformer: AbsTransformer, tokenizer: minbpe.base.Tokenize
     device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
     max_index = -1
     dim = force_dim
-    print(input, end='', flush=True)
+    #print(input, end='', flush=True)
 
     # if torch.backends.mps.is_available():
     #     # bug of MPS in pytorch 2.3.1, can't direct generate on dev. 2.6.0 is fixed
@@ -352,11 +357,15 @@ def run_transformer(transformer: AbsTransformer, tokenizer: minbpe.base.Tokenize
     # full_2d_causal_mask = nn.Transformer.generate_square_subsequent_mask(config.max_seq_len, device=device)
 
     index = len(tokenizer.encode(input))
+    #print(input,index)
 
     while max_index != tokenizer.special_tokens[endoftext]:
         with torch.no_grad():
             if transformer.is_cache_available() and max_index != -1:
-                last = torch.tensor([max_index], device=device).unsqueeze(0)
+                #print(max_index)
+                #last = torch.tensor([max_index], device=device).unsqueeze(0)
+                last = torch.tensor([max_index.item()], device=device).unsqueeze(0)  # 确保 max_index 是标量
+
                 causal_mask = full_causal_mask[:, :index]
                 # input_ids = torch.tensor(tokenizer.encode(input), device=device).unsqueeze(0)
                 # causal_mask = full_2d_causal_mask[:index, :index]
