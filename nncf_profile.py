@@ -223,18 +223,29 @@ def eval_use_nncf(tokenizer, my_transformer):
         calibration_dataset,
         model_type=nncf.ModelType.TRANSFORMER,
         preset=nncf.QuantizationPreset.MIXED,
-        target_device=device,
-        ignored_scope=nncf.IgnoredScope([
-            # 1. 嵌入层（精确匹配）
-            "core_model.embedding",
-            "core_model.pos_encoder",
-
-            # 2. 所有LayerNorm及其子层（跨层级匹配）
-            "*.*.norm*",  # 匹配 layers.0.norm1 等
-            "*.*.ln*",  # 冗余匹配其他可能的命名变体
-
-        ])
+        target_device=device
+        # ,
+        # ignored_scope=nncf.IgnoredScope([
+        #     # 1. 嵌入层（精确匹配）
+        #     "core_model.embedding",
+        #     "core_model.pos_encoder",
+        #
+        #     # 2. 所有LayerNorm及其子层（跨层级匹配）
+        #     "*.*.norm*",  # 匹配 layers.0.norm1 等
+        #     "*.*.ln*",  # 冗余匹配其他可能的命名变体
+        #
+        # ])
     )
+    # 获取NNCF graph
+    nncf_graph = compressed_model.nncf.get_graph()
+
+    # 打印graph信息
+    print("NNCF Graph nodes:")
+    for node in nncf_graph.get_all_nodes():
+        print(f"Node: {node.node_name}, Type: {node.node_type}")
+
+    # 或者打印更详细的信息
+    print(nncf_graph)
 
     for name, module in compressed_model.named_modules():
         if hasattr(module, 'weight_scale'):
