@@ -151,8 +151,8 @@ class MyTransformerDecoderLayer(nn.Module):
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
 
-    def forward(self, src, src_key_padding_mask=None, causal_mask=None, cache=None):
-        src2, _, new_cache = self.self_attn(src, src, src, attn_mask=causal_mask, key_padding_mask=src_key_padding_mask, is_causal=True, cache=cache)
+    def forward(self, src, src_key_padding_mask=None, causal_mask=None, cache=None, **kwargs):
+        src2, _, new_cache = self.self_attn(src, src, src, attn_mask=causal_mask, key_padding_mask=src_key_padding_mask, is_causal=True, cache=cache, **kwargs)
         src = src + self.dropout1(src2)
         src = self.norm1(src)
         src2 = self.linear2(self.dropout(F.relu(self.linear1(src))))
@@ -181,7 +181,7 @@ class MyTransformer(AbsTransformer):
         self.k_caches = None
         self.v_caches = None
 
-    def forward(self, input_ids, src_key_padding_mask=None, causal_mask=None, index=None):
+    def forward(self, input_ids, src_key_padding_mask=None, causal_mask=None, index=None, **kwargs):
         # 对嵌入向量进行缩放，使得其范数与位置编码（positional encoding）的范数相当。这种缩放帮助稳定训练过程。
         input_ids = self.embedding(input_ids) * math.sqrt(self.d_model)
         if self.enable_cache and index is not None:
@@ -190,7 +190,7 @@ class MyTransformer(AbsTransformer):
             for i in range(len(self.layers)):
                 layer = self.layers[i]
                 cache = (self.k_caches[i, :index - 1, :], self.v_caches[i, :index - 1, :])
-                input_ids, new_cache = layer(input_ids, src_key_padding_mask=src_key_padding_mask, causal_mask=causal_mask, cache=cache)
+                input_ids, new_cache = layer(input_ids, src_key_padding_mask=src_key_padding_mask, causal_mask=causal_mask, cache=cache, **kwargs)
                 # print(input_ids)
                 if new_cache[0].size(0) == 1:
                     self.k_caches[i, index-1, :] = new_cache[0]
@@ -203,7 +203,7 @@ class MyTransformer(AbsTransformer):
             # print(input_ids)
             for i in range(len(self.layers)):
                 layer = self.layers[i]
-                input_ids, new_cache = layer(input_ids, src_key_padding_mask=src_key_padding_mask, causal_mask=causal_mask)
+                input_ids, new_cache = layer(input_ids, src_key_padding_mask=src_key_padding_mask, causal_mask=causal_mask, **kwargs)
                 # if input_ids.size(1) > 15:
                 #     print(input_ids)
                 if self.enable_cache:

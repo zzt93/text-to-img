@@ -15,8 +15,10 @@ from torchvision import datasets, transforms
 import coder
 # import nncf_profile
 import ot
+import tensorrt_test
 import transformer
 import util
+import vllm_test
 from config import PathType
 from config import path, directory
 
@@ -219,6 +221,9 @@ if __name__ == '__main__':
         transformer_model_dir = config.directory(config.PathType.model, transformer_root)
         util.resume_model(my_transformer, transformer_model_dir, 'Epoch_*_transformer_*.pth')
         my_transformer.eval()
+        # vllm_test.save_model(len(tokenizer.vocab), transformer_model_dir)
+        tensorrt_test.save_model(len(tokenizer.vocab), transformer_model_dir)
+        # vllm_test.run_opt_llm()
 
         ot_dir = args.ot_dir
         coder_dir = args.coder_dir

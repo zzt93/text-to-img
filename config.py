@@ -49,5 +49,6 @@ mnist_img_dim = 28
 max_seq_len = 500
 enable_kv_cache = True
 device_string = "cuda" if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
-device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
+# device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
+device = 'cpu'
 profile = False

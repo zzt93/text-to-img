@@ -15,4 +15,5 @@ generate number image (MNIST like number) without pattern-confusion and pattern 
 # env
 ```shell
 pip install -r requirements.txt
+pip install "vllm[apple]"
 ```

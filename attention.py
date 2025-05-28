@@ -33,7 +33,7 @@ class MultiheadAttentionWithCache(nn.MultiheadAttention):
             need_weights: bool = False,
             attn_mask: Optional[torch.Tensor] = None,
             is_causal: bool = False,  # PyTorch 2.0+ 新增参数
-            cache: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
+            cache: Optional[Tuple[torch.Tensor, torch.Tensor]] = None, **kwargs
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         """
         扩展后的前向传播，支持缓存返回
@@ -46,6 +46,17 @@ class MultiheadAttentionWithCache(nn.MultiheadAttention):
             attn_weights: 注意力权重（如果 need_weights=True）
             cache: 更新后的缓存 (new_k_cache, new_v_cache)
         """
+        from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
+        attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
+        attn_output, attn_weights = attention_interface(
+            self,
+            query,
+            key,
+            value,
+            **kwargs,
+        )
+        return attn_output, attn_weights, None
+
         # 如果未启用缓存，直接调用原始方法
         if not self.cache_enabled:
             t, w = super().forward(query, query, query, key_padding_mask, need_weights, attn_mask, is_causal)
