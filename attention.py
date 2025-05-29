@@ -52,8 +52,8 @@ class MultiheadAttentionWithCache(nn.MultiheadAttention):
             return t, w, None
 
         # if batch_size == 1, remove this dim
-        if query.size(0) == 1:
-            query = query.squeeze(0)
+        query = query.squeeze(0)
+
         # 提取当前输入的键值对（未拼接缓存）
         q, k_proj, v_proj = self._compute_kv(query, cache is not None)
 
@@ -70,8 +70,8 @@ class MultiheadAttentionWithCache(nn.MultiheadAttention):
         # 调用原始注意力计算
         bsz = 1
         tgt_len = q.size(0)
-        if attn_mask.size(0) != tgt_len:
-            assert False, "attn_mask.size(0) != tgt_len"
+        # if attn_mask.size(0) != tgt_len:
+        #     assert False, "attn_mask.size(0) != tgt_len"
         src_len = k.size(0)
         embed_dim = q.size(-1)
         num_heads = self.num_heads

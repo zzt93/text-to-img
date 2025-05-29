@@ -132,10 +132,9 @@ class PositionalEncoding(nn.Module):
         self.encoding = self.encoding.unsqueeze(0)
 
     def forward(self, x, index=None):
-        if x.size(1) == 1:
-            return x + self.encoding[:, index-1]
-        else:
-            return x + self.encoding[:, :x.size(1)]
+        # index: tensor of shape [seq_len] 或单个位置 [1]
+        encoding = self.encoding[:, index]
+        return x + encoding
 
 
 class MyTransformerDecoderLayer(nn.Module):
@@ -177,53 +176,47 @@ class MyTransformer(AbsTransformer):
         self.d_model = d_model
 
         self.num_layers = num_layers
-        self.enable_cache = False
-        self.k_caches = None
-        self.v_caches = None
 
-    def forward(self, input_ids, src_key_padding_mask=None, causal_mask=None, index=None):
+    def forward(self, input_ids, src_key_padding_mask=None, causal_mask=None, k_caches=None, v_caches=None):
         # 对嵌入向量进行缩放，使得其范数与位置编码（positional encoding）的范数相当。这种缩放帮助稳定训练过程。
         input_ids = self.embedding(input_ids) * math.sqrt(self.d_model)
-        if self.enable_cache and index is not None:
+        cond = torch.tensor(input_ids.size(1) == 1)
+
+        def cache_branch(input_ids, k_caches, v_caches):
+            # assert index == causal_mask.size(1)
+            index = causal_mask.size(1)
             input_ids = self.pos_encoder(input_ids, index)
             # print(input_ids)
             for i in range(len(self.layers)):
                 layer = self.layers[i]
-                cache = (self.k_caches[i, :index - 1, :], self.v_caches[i, :index - 1, :])
+                cache = (k_caches[i, :index - 1, :], v_caches[i, :index - 1, :])
                 input_ids, new_cache = layer(input_ids, src_key_padding_mask=src_key_padding_mask, causal_mask=causal_mask, cache=cache)
                 # print(input_ids)
                 if new_cache[0].size(0) == 1:
-                    self.k_caches[i, index-1, :] = new_cache[0]
-                    self.v_caches[i, index-1, :] = new_cache[1]
-            if not self.training and input_ids.size(1) > 1:
-                input_ids = input_ids[:, -1, :].unsqueeze(0)
-            return self.decoder(input_ids)
-        else:
-            input_ids = self.pos_encoder(input_ids)
+                    k_caches[i, index-1, :] = new_cache[0]
+                    v_caches[i, index-1, :] = new_cache[1]
+
+            return self.decoder(input_ids), k_caches, v_caches
+
+        def non_cache_branch(input_ids, k_caches, v_caches):
+            input_ids = self.pos_encoder(input_ids, torch.arange(input_ids.size(1), device=input_ids.device))
             # print(input_ids)
             for i in range(len(self.layers)):
                 layer = self.layers[i]
                 input_ids, new_cache = layer(input_ids, src_key_padding_mask=src_key_padding_mask, causal_mask=causal_mask)
                 # if input_ids.size(1) > 15:
                 #     print(input_ids)
-                if self.enable_cache:
+                if k_caches is not None:
                     index = new_cache[0].size(0)
-                    self.k_caches[i, :index, :] = new_cache[0]
-                    self.v_caches[i, :index, :] = new_cache[1]
+                    k_caches[i, :index, :] = new_cache[0]
+                    v_caches[i, :index, :] = new_cache[1]
             if not self.training:
                 input_ids = input_ids[:, -1, :].unsqueeze(0)
-            return self.decoder(input_ids)
+            return self.decoder(input_ids), k_caches, v_caches
 
-    def train(self: T, mode: bool = True) -> T:
-        if mode is False:
-            self.enable_cache = config.enable_kv_cache
-            self.k_caches = torch.zeros(self.num_layers, config.max_seq_len, self.d_model, device=config.device)
-            self.v_caches = torch.zeros_like(self.k_caches, device=config.device)
-        return super().train(mode)
+        output, new_k_caches, new_v_caches = torch.cond(cond, cache_branch, non_cache_branch, (input_ids, k_caches, v_caches))
+        return output, new_k_caches, new_v_caches
 
-
-    def is_cache_available(self):
-        return self.enable_cache
 
 
 class PaddingTextDataset(Dataset):
@@ -333,7 +326,7 @@ def generate_square_subsequent_mask_bool(sz: int, device) -> torch.Tensor:
 
 
 def run_transformer(transformer: AbsTransformer, tokenizer: minbpe.base.Tokenizer, input: str, force_dim: int = None, **kwargs):
-    device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
+    device = config.device
     max_index = -1
     dim = force_dim
     print(input, end='', flush=True)
@@ -352,20 +345,23 @@ def run_transformer(transformer: AbsTransformer, tokenizer: minbpe.base.Tokenize
     # full_2d_causal_mask = nn.Transformer.generate_square_subsequent_mask(config.max_seq_len, device=device)
 
     index = len(tokenizer.encode(input))
+    if not transformer.training:
+        k_caches = torch.zeros(transformer.num_layers, config.max_seq_len, transformer.d_model, device=config.device)
+        v_caches = torch.zeros_like(k_caches, device=config.device)
 
     while max_index != tokenizer.special_tokens[endoftext]:
         with torch.no_grad():
-            if transformer.is_cache_available() and max_index != -1:
+            if k_caches is not None and max_index != -1:
                 last = torch.tensor([max_index], device=device).unsqueeze(0)
                 causal_mask = full_causal_mask[:, :index]
                 # input_ids = torch.tensor(tokenizer.encode(input), device=device).unsqueeze(0)
                 # causal_mask = full_2d_causal_mask[:index, :index]
-                output = transformer(last, causal_mask=causal_mask, index=index)
+                output, _, _ = transformer(last, causal_mask=causal_mask, k_caches=k_caches, v_caches=v_caches)
             else:
                 # .unsqueeze(0) add a batch dimension
                 input_ids = torch.tensor(tokenizer.encode(input), device=device).unsqueeze(0)
                 causal_mask = full_2d_causal_mask[:index, :index]
-                output = transformer(input_ids, causal_mask=causal_mask)
+                output, _, _ = transformer(input_ids, causal_mask=causal_mask, k_caches=k_caches, v_caches=v_caches)
 
         # if torch.cuda.is_available():
         #     with torch.no_grad():
@@ -389,7 +385,6 @@ def run_transformer(transformer: AbsTransformer, tokenizer: minbpe.base.Tokenize
         input += next
         index += 1
 
-    transformer.clear_kv_cache()
 
 
 def train_transformer(model: nn.Module, tokenizer: minbpe.base.Tokenizer, root_dir: str, resume: bool, epochs: int = 10, lr: float = 5e-5, batch_size: int = 2, **kwargs):

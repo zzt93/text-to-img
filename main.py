@@ -13,8 +13,8 @@ from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 
 import coder
-# import nncf_profile
 import ot
+import tensorrt_test
 import transformer
 import util
 from config import PathType
@@ -219,6 +219,8 @@ if __name__ == '__main__':
         transformer_model_dir = config.directory(config.PathType.model, transformer_root)
         util.resume_model(my_transformer, transformer_model_dir, 'Epoch_*_transformer_*.pth')
         my_transformer.eval()
+
+        tensorrt_test.save_model(tokenizer, my_transformer)
 
         ot_dir = args.ot_dir
         coder_dir = args.coder_dir
