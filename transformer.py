@@ -9,7 +9,6 @@ import torch.nn as nn
 from torch.nn import TransformerEncoder, TransformerEncoderLayer, TransformerDecoder, TransformerDecoderLayer
 from torch.nn.utils.rnn import pad_sequence
 
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -29,6 +28,12 @@ class AbsTransformer(nn.Module, metaclass=ABCMeta):
 
     def is_cache_available(self):
         return False
+
+    def forward_step(self, input_ids, src_key_padding_mask=None, causal_mask=None, k_caches=None, v_caches=None, clone=False):
+        pass
+
+    def forward_full(self, input_ids, src_key_padding_mask=None, causal_mask=None, k_caches=None, v_caches=None, clone=False):
+        pass
 
 
 class CrossAttentionTransformer(AbsTransformer):
@@ -177,45 +182,62 @@ class MyTransformer(AbsTransformer):
 
         self.num_layers = num_layers
 
-    def forward(self, input_ids, src_key_padding_mask=None, causal_mask=None, k_caches=None, v_caches=None):
+    def forward_step(self, input_ids, src_key_padding_mask=None, causal_mask=None, k_caches=None, v_caches=None, clone=False):
         # 对嵌入向量进行缩放，使得其范数与位置编码（positional encoding）的范数相当。这种缩放帮助稳定训练过程。
         input_ids = self.embedding(input_ids) * math.sqrt(self.d_model)
-        cond = torch.tensor(input_ids.size(1) == 1)
+        index = causal_mask.size(1)
+        # assert index == causal_mask.size(1)
+        input_ids = self.pos_encoder(input_ids, index)
+        index_tensor = torch.arange(index, device=input_ids.device)[-1].unsqueeze(0)
+        new_k_list = []
+        new_v_list = []
+        for i in range(len(self.layers)):
+            layer = self.layers[i]
+            cache = (k_caches[i, :index - 1, :], v_caches[i, :index - 1, :])
+            input_ids, new_cache = layer(input_ids, src_key_padding_mask=src_key_padding_mask, causal_mask=causal_mask, cache=cache)
+            # assert new_cache[0].size(0) == 1
+            # k_caches[i, index-1, :] = new_cache[0]
+            # v_caches[i, index-1, :] = new_cache[1]
+            new_k_list.append(new_cache[0])
+            new_v_list.append(new_cache[1])
 
-        def cache_branch(input_ids, k_caches, v_caches):
-            # assert index == causal_mask.size(1)
-            index = causal_mask.size(1)
-            input_ids = self.pos_encoder(input_ids, index)
-            # print(input_ids)
-            for i in range(len(self.layers)):
-                layer = self.layers[i]
-                cache = (k_caches[i, :index - 1, :], v_caches[i, :index - 1, :])
-                input_ids, new_cache = layer(input_ids, src_key_padding_mask=src_key_padding_mask, causal_mask=causal_mask, cache=cache)
-                # print(input_ids)
-                if new_cache[0].size(0) == 1:
-                    k_caches[i, index-1, :] = new_cache[0]
-                    v_caches[i, index-1, :] = new_cache[1]
+        new_k_caches = torch.stack(new_k_list, dim=0)  # [num_layers, ...]
+        new_v_caches = torch.stack(new_v_list, dim=0)  # [num_layers, ...]
+        # 一次性 index_copy_，假定 index_tensor 适合 broadcast 到 num_layers 维
+        k_caches = k_caches.index_copy(1, index_tensor, new_k_caches)  # 1是sequence length维，视caches shape调整
+        v_caches = v_caches.index_copy(1, index_tensor, new_v_caches)
 
-            return self.decoder(input_ids), k_caches, v_caches
+        return self.decoder(input_ids), k_caches, v_caches
 
-        def non_cache_branch(input_ids, k_caches, v_caches):
-            input_ids = self.pos_encoder(input_ids, torch.arange(input_ids.size(1), device=input_ids.device))
-            # print(input_ids)
-            for i in range(len(self.layers)):
-                layer = self.layers[i]
-                input_ids, new_cache = layer(input_ids, src_key_padding_mask=src_key_padding_mask, causal_mask=causal_mask)
-                # if input_ids.size(1) > 15:
-                #     print(input_ids)
-                if k_caches is not None:
-                    index = new_cache[0].size(0)
-                    k_caches[i, :index, :] = new_cache[0]
-                    v_caches[i, :index, :] = new_cache[1]
-            if not self.training:
-                input_ids = input_ids[:, -1, :].unsqueeze(0)
-            return self.decoder(input_ids), k_caches, v_caches
+    def forward_full(self, input_ids, src_key_padding_mask=None, causal_mask=None, k_caches=None, v_caches=None, first=False, clone=False):
+        # 对嵌入向量进行缩放，使得其范数与位置编码（positional encoding）的范数相当。这种缩放帮助稳定训练过程。
+        input_ids = self.embedding(input_ids) * math.sqrt(self.d_model)
+        index = causal_mask.size(1)
+        # assert causal_mask.size(1) == input_ids.size(1)
+        index_tensor = torch.arange(index, device=input_ids.device)
+        input_ids = self.pos_encoder(input_ids, index_tensor)
+        new_k_list = []
+        new_v_list = []
+        for i in range(len(self.layers)):
+            layer = self.layers[i]
+            input_ids, new_cache = layer(input_ids, src_key_padding_mask=src_key_padding_mask, causal_mask=causal_mask)
+            # assert new_cache[0].size(0) == causal_mask.size(1)
+            if k_caches is not None:
+                # k_caches[i, :index, :] = new_cache[0]
+                # v_caches[i, :index, :] = new_cache[1]
+                new_k_list.append(new_cache[0])
+                new_v_list.append(new_cache[1])
 
-        output, new_k_caches, new_v_caches = torch.cond(cond, cache_branch, non_cache_branch, (input_ids, k_caches, v_caches))
-        return output, new_k_caches, new_v_caches
+        new_k_caches = torch.stack(new_k_list, dim=0)  # [num_layers, ...]
+        new_v_caches = torch.stack(new_v_list, dim=0)  # [num_layers, ...]
+        # 一次性 index_copy_，假定 index_tensor 适合 broadcast 到 num_layers 维
+        k_caches = k_caches.index_copy(1, index_tensor, new_k_caches)  # 1是sequence length维，视caches shape调整
+        v_caches = v_caches.index_copy(1, index_tensor, new_v_caches)
+
+        if not self.training:
+            input_ids = input_ids[:, -1, :].unsqueeze(0)
+
+        return self.decoder(input_ids), k_caches, v_caches
 
 
 
@@ -356,12 +378,12 @@ def run_transformer(transformer: AbsTransformer, tokenizer: minbpe.base.Tokenize
                 causal_mask = full_causal_mask[:, :index]
                 # input_ids = torch.tensor(tokenizer.encode(input), device=device).unsqueeze(0)
                 # causal_mask = full_2d_causal_mask[:index, :index]
-                output, _, _ = transformer(last, causal_mask=causal_mask, k_caches=k_caches, v_caches=v_caches)
+                output, k_caches, v_caches = transformer.forward_step(last, causal_mask=causal_mask, k_caches=k_caches, v_caches=v_caches)
             else:
                 # .unsqueeze(0) add a batch dimension
                 input_ids = torch.tensor(tokenizer.encode(input), device=device).unsqueeze(0)
                 causal_mask = full_2d_causal_mask[:index, :index]
-                output, _, _ = transformer(input_ids, causal_mask=causal_mask, k_caches=k_caches, v_caches=v_caches)
+                output, k_caches, v_caches = transformer.forward_full(input_ids, causal_mask=causal_mask, k_caches=k_caches, v_caches=v_caches)
 
         # if torch.cuda.is_available():
         #     with torch.no_grad():

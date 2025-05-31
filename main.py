@@ -220,7 +220,7 @@ if __name__ == '__main__':
         util.resume_model(my_transformer, transformer_model_dir, 'Epoch_*_transformer_*.pth')
         my_transformer.eval()
 
-        tensorrt_test.save_model(tokenizer, my_transformer)
+        tensorrt_test.save_static_model(tokenizer, my_transformer)
 
         ot_dir = args.ot_dir
         coder_dir = args.coder_dir
